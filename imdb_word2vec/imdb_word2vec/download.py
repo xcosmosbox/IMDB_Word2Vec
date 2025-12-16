@@ -44,6 +44,26 @@ def _decompress_gzip(src: Path, dst: Path) -> None:
     logger.info("解压完成: %s -> %s", src.name, dst.name)
 
 
+def _save_head_slice(tsv_path: Path, slice_dir: Path, nrows: int = 1000) -> None:
+    """保存 TSV 的前 n 行到切片目录，便于快速查看，不影响后续训练。"""
+    try:
+        import pandas as pd
+    except ImportError:
+        logger.warning("未安装 pandas，跳过切片：%s", tsv_path.name)
+        return
+
+    slice_dir.mkdir(parents=True, exist_ok=True)
+    slice_path = slice_dir / tsv_path.name.replace(".tsv", "_head.tsv")
+    if slice_path.exists():
+        return
+    try:
+        df_head = pd.read_csv(tsv_path, sep="\t", nrows=nrows, low_memory=False)
+        df_head.to_csv(slice_path, sep="\t", index=False)
+        logger.info("已保存前 %d 行切片：%s", nrows, slice_path.name)
+    except Exception as exc:
+        logger.warning("切片失败 %s: %s", tsv_path.name, exc)
+
+
 def download_all(tsv_urls: Dict[str, str] | None = None) -> Dict[str, Path]:
     """下载并解压所需 IMDb 数据，返回 tsv 路径字典。"""
     urls = tsv_urls or CONFIG.data.tsv_urls
@@ -55,6 +75,7 @@ def download_all(tsv_urls: Dict[str, str] | None = None) -> Dict[str, Path]:
         tsv_path = CONFIG.paths.data_dir / fname.replace(".gz", "")
         _download_file(url, gz_path)
         _decompress_gzip(gz_path, tsv_path)
+        _save_head_slice(tsv_path, CONFIG.paths.slices_dir, nrows=1000)
         paths[fname] = tsv_path
     return paths
 

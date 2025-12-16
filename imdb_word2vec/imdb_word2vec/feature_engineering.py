@@ -70,7 +70,11 @@ def _region_type_one_hot(regional_titles_df: pd.DataFrame) -> pd.DataFrame:
     region_agg = pd.concat([df[["tconst"]], region_dummies], axis=1).groupby("tconst").max()
     type_agg = pd.concat([df[["tconst"]], type_dummies], axis=1).groupby("tconst").max()
 
-    combined = region_agg.join(type_agg, how="outer").reset_index().fillna(0).astype(int)
+    combined = region_agg.join(type_agg, how="outer").reset_index().fillna(0)
+    # 仅对独热列转为整数，保留 tconst 为字符串
+    for col in combined.columns:
+        if col != "tconst":
+            combined[col] = combined[col].astype(int)
     return combined
 
 

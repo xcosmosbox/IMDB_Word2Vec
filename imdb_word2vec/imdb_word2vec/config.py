@@ -32,6 +32,9 @@ class PathConfig:
     artifacts_dir: Path = field(
         default_factory=lambda: Path(__file__).resolve().parents[1] / "artifacts"
     )
+    slices_dir: Path = field(
+        default_factory=lambda: Path(__file__).resolve().parents[1] / "data_slices"
+    )
 
     @property
     def fused_features_path(self) -> Path:
@@ -59,7 +62,7 @@ class PathConfig:
 
     def ensure(self) -> None:
         """确保目录存在。"""
-        for folder in [self.data_dir, self.cache_dir, self.logs_dir, self.artifacts_dir]:
+        for folder in [self.data_dir, self.cache_dir, self.logs_dir, self.artifacts_dir, self.slices_dir]:
             folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -74,6 +77,8 @@ class DataConfig:
             "title.akas.tsv.gz": "https://datasets.imdbws.com/title.akas.tsv.gz",
             "title.basics.tsv.gz": "https://datasets.imdbws.com/title.basics.tsv.gz",
             "title.crew.tsv.gz": "https://datasets.imdbws.com/title.crew.tsv.gz",
+            "title.episode.tsv.gz":"https://datasets.imdbws.com/title.episode.tsv.gz",
+            "title.principals.tsv.gz":"https://datasets.imdbws.com/title.principals.tsv.gz",
             "title.ratings.tsv.gz": "https://datasets.imdbws.com/title.ratings.tsv.gz",
         }
     )

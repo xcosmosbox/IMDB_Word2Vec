@@ -23,39 +23,36 @@ def _generate_training_data(
     vocab_size: int,
     seed: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """根据窗口与负采样参数生成 Skip-gram 训练数据。"""
+    """根据窗口与负采样参数生成 Skip-gram 训练数据（纯 NumPy 实现，避免 skipgrams 随机数 float Bug）。"""
     targets, contexts, labels = [], [], []
-    sampling_table = tf.keras.preprocessing.sequence.make_sampling_table(vocab_size)
+    rng = np.random.default_rng(seed)
 
     for sequence in sequences:
-        positive_skip_grams, _ = tf.keras.preprocessing.sequence.skipgrams(
-            sequence,
-            vocabulary_size=vocab_size,
-            sampling_table=sampling_table,
-            window_size=window_size,
-            negative_samples=0,
-        )
+        seq_len = len(sequence)
+        for i, target_word in enumerate(sequence):
+            # 窗口内的正样本
+            start = max(i - window_size, 0)
+            end = min(i + window_size + 1, seq_len)
+            for j in range(start, end):
+                if j == i:
+                    continue
+                context_word = sequence[j]
 
-        for target_word, context_word in positive_skip_grams:
-            context_class = tf.expand_dims(tf.constant([context_word], dtype="int64"), 1)
-            negative_sampling_candidates, _, _ = tf.random.log_uniform_candidate_sampler(
-                true_classes=context_class,
-                num_true=1,
-                num_sampled=num_ns,
-                unique=True,
-                range_max=vocab_size,
-                seed=seed,
-                name="negative_sampling",
-            )
+                # 负样本，排除当前 target/context
+                negatives = []
+                while len(negatives) < num_ns:
+                    candidate = rng.integers(0, vocab_size)
+                    if candidate != context_word and candidate != target_word:
+                        negatives.append(candidate)
 
-            context = tf.concat([tf.squeeze(context_class, 1), negative_sampling_candidates], 0)
-            label = tf.constant([1] + [0] * num_ns, dtype="int64")
+                context = np.array([context_word] + negatives, dtype=np.int64)
+                label = np.array([1] + [0] * num_ns, dtype=np.int64)
 
-            targets.append(target_word)
-            contexts.append(context)
-            labels.append(label)
+                targets.append(target_word)
+                contexts.append(context)
+                labels.append(label)
 
-    return np.array(targets), np.array(contexts), np.array(labels)
+    return np.array(targets, dtype=np.int64), np.array(contexts, dtype=np.int64), np.array(labels, dtype=np.int64)
 
 
 class Word2Vec(tf.keras.Model):
