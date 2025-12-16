@@ -1,0 +1,45 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.log
+*.egg-info/
+.coverage
+.pytest_cache/
+
+# 虚拟环境与数据缓存
+imdb_venv/
+imdb_data/
+cache/
+logs/
+
+# 中间与输出文件
+*.csv
+*.pkl
+*.parquet
+best_model.keras
+vectors.tsv
+metadata.tsv
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+
+imdb_venv/
+imdb_data/
+__pycache__/
+.pytest_cache/
+.DS_Store
+*.parquet
+*.pkl
+*.csv
+*.tsv
+*.tsv.gz
+logs/
+vectors.tsv
+metadata.tsv
+best_model.keras
+
