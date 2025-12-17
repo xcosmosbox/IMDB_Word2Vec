@@ -6,6 +6,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from .config import CONFIG
 from .logging_utils import setup_logging
@@ -34,23 +35,29 @@ def build_vocab(
     counter = 1
 
     # 影片类型
-    for col in ["genres1", "genres2", "genres3"]:
+    for col in tqdm(["genres1", "genres2", "genres3"], desc="注册影片类型", disable=not CONFIG.data.enable_tqdm):
         counter = _register_column(movies_info_df, col, vocab, counter)
 
     # 区域与别名类型
-    for col in ["region", "types", "title"]:
+    for col in tqdm(["region", "types", "title"], desc="注册区域与别名", disable=not CONFIG.data.enable_tqdm):
         counter = _register_column(regional_titles_df, col, vocab, counter)
 
     # 人员职业
-    for col in ["primaryProfession_top1", "primaryProfession_top2", "primaryProfession_top3"]:
+    for col in tqdm(
+        ["primaryProfession_top1", "primaryProfession_top2", "primaryProfession_top3"],
+        desc="注册人员职业",
+        disable=not CONFIG.data.enable_tqdm,
+    ):
         counter = _register_column(staff_df, col, vocab, counter)
 
     # 影片与人员标识、标题及 principals/episode 信息
-    counter = _register_column(movies_info_df, "tconst", vocab, counter)
-    counter = _register_column(staff_df, "nconst", vocab, counter)
-    counter = _register_column(movies_info_df, "title", vocab, counter)
-    for col in ["principalCat1", "principalCat2", "principalCat3", "parentTconst"]:
+    for col in tqdm(
+        ["tconst", "title", "principalCat1", "principalCat2", "principalCat3", "parentTconst"],
+        desc="注册影片标识/标题/主类别/父标题",
+        disable=not CONFIG.data.enable_tqdm,
+    ):
         counter = _register_column(movies_info_df, col, vocab, counter)
+    counter = _register_column(staff_df, "nconst", vocab, counter)
 
     logger.info("词汇表规模：%d", len(vocab))
     vocab_path = CONFIG.paths.vocab_path

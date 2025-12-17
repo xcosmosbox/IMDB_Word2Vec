@@ -3,6 +3,8 @@ from __future__ import annotations
 import pandas as pd
 from typing import Dict, Optional, Tuple
 
+from tqdm import tqdm
+
 from .config import CONFIG
 from .logging_utils import setup_logging
 
@@ -23,7 +25,12 @@ def _clean_known_for_titles(df: pd.DataFrame, movie_tconsts: set[str]) -> pd.Dat
         row["knownForTitles"] = ",".join(filtered)
         return row
 
-    df = df.apply(_filter_row, axis=1)
+    # tqdm 可选显示行级过滤进度，行数较多时便于观测耗时
+    if CONFIG.data.enable_tqdm:
+        tqdm.pandas(desc="过滤代表作字段")
+        df = df.progress_apply(_filter_row, axis=1)
+    else:
+        df = df.apply(_filter_row, axis=1)
     df = df[df["knownForTitles"] != ""]
     return df
 
@@ -33,6 +40,8 @@ def preprocess_all(
     subset_rows: Optional[int] = CONFIG.data.subset_rows,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """完成 IMDb 基础表的清洗与拆分，返回关键 DataFrame。"""
+    step_bar = tqdm(total=8, desc="预处理阶段", disable=not CONFIG.data.enable_tqdm)
+
     # 读取影片基本信息
     title_basics = _read_tsv(tsv_paths["title.basics.tsv.gz"], nrows=subset_rows, low_memory=False)
     title_basics = title_basics.drop(columns=["startYear", "endYear", "runtimeMinutes"])
@@ -40,6 +49,7 @@ def preprocess_all(
     title_basics = title_basics[title_basics["titleType"] == "movie"].drop(columns=["titleType"])
     movie_tconsts = set(title_basics["tconst"])
     logger.info("影片数量: %d", len(movie_tconsts))
+    step_bar.update(1)
 
     # 人员信息
     name_basics = _read_tsv(tsv_paths["name.basics.tsv.gz"], nrows=subset_rows)
@@ -48,6 +58,7 @@ def preprocess_all(
     name_basics = _clean_known_for_titles(name_basics, movie_tconsts)
     name_nconsts = set(name_basics["nconst"])
     logger.info("人员数量: %d", len(name_nconsts))
+    step_bar.update(1)
 
     # 别名与区域
     title_akas = _read_tsv(tsv_paths["title.akas.tsv.gz"], nrows=subset_rows)
@@ -55,6 +66,7 @@ def preprocess_all(
     title_akas = title_akas.dropna(subset=["title", "titleId"])
     title_akas = title_akas[title_akas["titleId"].isin(movie_tconsts)]
     title_akas = title_akas.rename(columns={"titleId": "tconst"})
+    step_bar.update(1)
 
     # 剧组
     title_crew = _read_tsv(tsv_paths["title.crew.tsv.gz"], nrows=subset_rows)
@@ -76,17 +88,20 @@ def preprocess_all(
     title_ratings = _read_tsv(tsv_paths["title.ratings.tsv.gz"], nrows=subset_rows)
     title_ratings = title_ratings.dropna(subset=["averageRating", "numVotes"])
     title_ratings = title_ratings[title_ratings["tconst"].isin(movie_tconsts)]
+    step_bar.update(1)
 
     # 演职员明细（principals）：用于补充演员/角色信息
     title_principals = _read_tsv(tsv_paths["title.principals.tsv.gz"], nrows=subset_rows)
     title_principals = title_principals[title_principals["tconst"].isin(movie_tconsts)]
     principals_cols = ["tconst", "nconst", "category", "characters"]
     title_principals = title_principals[principals_cols].fillna("\\N")
+    step_bar.update(1)
 
     # 剧集层级（episode）：如有与电影 tconst 对应的父标题，则保留映射
     title_episode = _read_tsv(tsv_paths["title.episode.tsv.gz"], nrows=subset_rows)
     title_episode = title_episode[title_episode["tconst"].isin(movie_tconsts)]
     title_episode = title_episode[["tconst", "parentTconst"]].fillna("\\N")
+    step_bar.update(1)
 
     # 构建影片信息表
     original_titles = title_akas[title_akas["isOriginalTitle"] == 1]
@@ -187,6 +202,8 @@ def preprocess_all(
     title_crew.to_csv(CONFIG.paths.cache_dir / "title_crew_tsv_df.csv", index=False)
     title_principals.to_csv(CONFIG.paths.cache_dir / "title_principals_df.csv", index=False)
     title_episode.to_csv(CONFIG.paths.cache_dir / "title_episode_df.csv", index=False)
+    step_bar.update(1)
+    step_bar.close()
 
     logger.info("清洗完成，生成 movies_info/staff/regional_titles 数据集")
     return movies_info, staff_df, regional_titles_df

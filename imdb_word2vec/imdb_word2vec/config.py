@@ -104,6 +104,7 @@ class DataConfig:
     """数据下载与采样配置。"""
 
     subset_rows: Optional[int] = 100_000  # None 表示全量
+    enable_tqdm: bool = True  # 数据相关步骤是否开启 tqdm 进度展示
     tsv_urls: Dict[str, str] = field(
         default_factory=lambda: {
             "name.basics.tsv.gz": "https://datasets.imdbws.com/name.basics.tsv.gz",

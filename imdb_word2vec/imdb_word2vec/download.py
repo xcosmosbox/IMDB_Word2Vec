@@ -70,7 +70,8 @@ def download_all(tsv_urls: Dict[str, str] | None = None) -> Dict[str, Path]:
     CONFIG.paths.ensure()
     paths: Dict[str, Path] = {}
 
-    for fname, url in urls.items():
+    iterator = tqdm(urls.items(), desc="下载并解压 IMDb 数据", unit="file") if CONFIG.data.enable_tqdm else urls.items()
+    for fname, url in iterator:
         gz_path = CONFIG.paths.data_dir / fname
         tsv_path = CONFIG.paths.data_dir / fname.replace(".gz", "")
         _download_file(url, gz_path)
