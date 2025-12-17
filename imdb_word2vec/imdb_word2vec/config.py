@@ -123,16 +123,31 @@ class TrainConfig:
 
     # 设备检测结果：(device_string, device_type)
     _device_info: Tuple[str, str] = field(default_factory=detect_device)
+    enable_distribute: bool = True  # 多 GPU 时启用 MirroredStrategy
+    enable_mixed_precision: bool = True  # GPU/Metal 环境启用混合精度以节省显存
+
+    # 词表与采样相关配置
+    min_freq: int = 5  # 低频裁剪阈值，低于该频次的 token 将被丢弃
+    subsample_t: float = 1e-5  # 高频子采样阈值，越小丢弃高频 token 越多
+    vocab_limit: int = 20_000  # 用于 Word2Vec 的词表上限
+
+    # 负采样与窗口
+    window_size: int = 2
+    num_negative_samples: int = 8  # 适度降低负样本，平衡速度与质量
+
+    # 数据规模与分块
+    max_sequences: Optional[int] = None  # 训练语料行数上限
+    seq_chunk_size: int = 100_000  # 分块生成 skip-gram 样本的序列块大小
+
+    # 梯度累积（显存紧张时可开启）
+    accum_steps_word2vec: int = 1  # >1 时开启梯度累积
+    accum_steps_autoencoder: int = 1
 
     batch_size_autoencoder: int = 2048
     epochs_autoencoder: int = 50
     autoencoder_val_split: float = 0.2
     batch_size_word2vec: int = 1024
-    window_size: int = 2
-    num_negative_samples: int = 10
     embedding_dim: int = 150
-    vocab_limit: int = 20_000  # 用于 Word2Vec 的词表上限
-    max_sequences: Optional[int] = None  # Word2Vec 训练样本上限，用于小样本快速验证
 
     @property
     def device_string(self) -> str:
@@ -164,6 +179,13 @@ class Config:
         self.paths.ensure()
         os.environ["PYTHONHASHSEED"] = str(self.random_seed)
         tf.random.set_seed(self.random_seed)
+        # 在支持 GPU/Metal 时按需启用混合精度
+        if self.train.enable_mixed_precision and self.train.use_gpu:
+            try:
+                from tensorflow.keras import mixed_precision
+                mixed_precision.set_global_policy("mixed_float16")
+            except Exception:
+                pass
 
 
 CONFIG = Config()

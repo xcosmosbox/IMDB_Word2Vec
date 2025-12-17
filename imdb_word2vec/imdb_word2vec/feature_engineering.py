@@ -45,10 +45,12 @@ def build_vocab(
     for col in ["primaryProfession_top1", "primaryProfession_top2", "primaryProfession_top3"]:
         counter = _register_column(staff_df, col, vocab, counter)
 
-    # 影片与人员标识、标题
+    # 影片与人员标识、标题及 principals/episode 信息
     counter = _register_column(movies_info_df, "tconst", vocab, counter)
     counter = _register_column(staff_df, "nconst", vocab, counter)
     counter = _register_column(movies_info_df, "title", vocab, counter)
+    for col in ["principalCat1", "principalCat2", "principalCat3", "parentTconst"]:
+        counter = _register_column(movies_info_df, col, vocab, counter)
 
     logger.info("词汇表规模：%d", len(vocab))
     vocab_path = CONFIG.paths.vocab_path

@@ -19,6 +19,18 @@ from .logging_utils import setup_logging
 logger = setup_logging(CONFIG.paths.logs_dir)
 
 
+def _get_strategy() -> tf.distribute.Strategy:
+    """按需创建分布式策略，默认使用单设备策略。"""
+    if CONFIG.train.enable_distribute:
+        gpus = tf.config.list_logical_devices("GPU")
+        if len(gpus) >= 1:
+            try:
+                return tf.distribute.MirroredStrategy()
+            except Exception:
+                pass
+    return tf.distribute.get_strategy()
+
+
 class TqdmProgressCallback(tf.keras.callbacks.Callback):
     """使用 tqdm 显示训练进度的回调。"""
 
@@ -64,18 +76,23 @@ def train_autoencoder(
     scaler = StandardScaler()
     data_std = scaler.fit_transform(data)
 
-    input_layer = Input(shape=(data_std.shape[1],))
-    x = Dense(512, activation="relu")(input_layer)
-    x = Dropout(0.25)(x)
-    x = Dense(256, activation="relu")(x)
-    x = Dropout(0.25)(x)
-    x = Dense(128, activation="relu")(x)
-    x = Dropout(0.25)(x)
-    output_layer = Dense(data_std.shape[1], activation="relu")(x)
+    # 分布式策略与混合精度由 config.setup 设置
+    strategy = _get_strategy()
+    logger.info("Autoencoder 分布式策略: %s, 设备数: %d", strategy.__class__.__name__, strategy.num_replicas_in_sync)
 
-    model: Model = Model(inputs=input_layer, outputs=output_layer)
-    model.compile(optimizer="adam", loss="mse")
-    logger.info("自编码器结构: 输入维度=%d", data_std.shape[1])
+    with strategy.scope():
+        input_layer = Input(shape=(data_std.shape[1],))
+        x = Dense(512, activation="relu")(input_layer)
+        x = Dropout(0.25)(x)
+        x = Dense(256, activation="relu")(x)
+        x = Dropout(0.25)(x)
+        x = Dense(128, activation="relu")(x)
+        x = Dropout(0.25)(x)
+        output_layer = Dense(data_std.shape[1], activation="relu")(x)
+
+        model: Model = Model(inputs=input_layer, outputs=output_layer)
+        model.compile(optimizer="adam", loss="mse")
+        logger.info("自编码器结构: 输入维度=%d", data_std.shape[1])
 
     ckpt_path = CONFIG.paths.best_model_path
     epochs = CONFIG.train.epochs_autoencoder
@@ -98,38 +115,34 @@ def train_autoencoder(
         tqdm_callback,
     ]
 
-    # 使用检测到的设备进行训练
-    device = CONFIG.train.device_string
-    device_type = CONFIG.train.device_type
-    logger.info("使用设备进行训练: %s (%s)", device, device_type)
+    # 使用策略作用域下训练
+    history = model.fit(
+        data_std,
+        data_std,
+        epochs=epochs,
+        batch_size=CONFIG.train.batch_size_autoencoder,
+        validation_split=CONFIG.train.autoencoder_val_split,
+        callbacks=callbacks,
+        verbose=0,  # 关闭 Keras 默认输出，使用 tqdm
+    )
+    logger.info("训练完成，最佳 val_loss=%.6f", min(history.history["val_loss"]))
+    model.load_weights(ckpt_path)
 
-    with tf.device(device):
-        history = model.fit(
-            data_std,
-            data_std,
-            epochs=epochs,
-            batch_size=CONFIG.train.batch_size_autoencoder,
-            validation_split=CONFIG.train.autoencoder_val_split,
-            callbacks=callbacks,
-            verbose=0,  # 关闭 Keras 默认输出，使用 tqdm
-        )
-        logger.info("训练完成，最佳 val_loss=%.6f", min(history.history["val_loss"]))
-        model.load_weights(ckpt_path)
+    # 使用 tqdm 显示推理进度
+    logger.info("正在生成融合特征...")
+    n_samples = data_std.shape[0]
+    batch_size = CONFIG.train.batch_size_autoencoder
+    n_batches = (n_samples + batch_size - 1) // batch_size
 
-        # 使用 tqdm 显示推理进度
-        logger.info("正在生成融合特征...")
-        n_samples = data_std.shape[0]
-        batch_size = CONFIG.train.batch_size_autoencoder
-        n_batches = (n_samples + batch_size - 1) // batch_size
-
-        fused_batches = []
-        with tqdm(total=n_batches, desc="推理进度", unit="batch") as pbar:
-            for i in range(0, n_samples, batch_size):
-                batch = data_std[i : i + batch_size]
-                fused_batch = model.predict(batch, verbose=0)
-                fused_batches.append(fused_batch)
-                pbar.update(1)
-        fused = np.vstack(fused_batches)
+    fused_batches = []
+    with tqdm(total=n_batches, desc="推理进度", unit="batch") as pbar:
+        for i in range(0, n_samples, batch_size):
+            batch = data_std[i : i + batch_size]
+            fused_batch = model.predict(batch, verbose=0)
+            # 混合精度下输出可能为 float16，这里统一转回 float32 便于后续训练
+            fused_batches.append(fused_batch.astype(np.float32))
+            pbar.update(1)
+    fused = np.vstack(fused_batches)
 
     fused_df = pd.DataFrame(fused)
     fused_path = CONFIG.paths.fused_features_path
