@@ -1,4 +1,5 @@
 tensorflow==2.16.1
+tensorflow-metal; sys_platform == "darwin"
 pandas==2.2.3
 numpy==1.26.4
 scikit-learn==1.5.2

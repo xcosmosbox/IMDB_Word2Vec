@@ -2,15 +2,48 @@ from __future__ import annotations
 
 import os
 import random
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import tensorflow as tf
 
 # 全局随机种子，确保流程可复现
 GLOBAL_SEED = 42
 random.seed(GLOBAL_SEED)
+
+
+def detect_device() -> Tuple[str, str]:
+    """检测最佳可用设备，优先级：NVIDIA CUDA > Apple Metal > CPU。
+
+    Returns:
+        (device_string, device_name): 例如 ("/GPU:0", "NVIDIA") 或 ("/GPU:0", "Metal") 或 ("/CPU:0", "CPU")
+    """
+    gpus = tf.config.list_physical_devices("GPU")
+    if gpus:
+        try:
+            # 尝试获取 GPU 详情以区分 NVIDIA 和 Metal
+            gpu_details = tf.config.experimental.get_device_details(gpus[0])
+            device_name = gpu_details.get("device_name", "")
+
+            # 检查是否为 NVIDIA GPU
+            if "NVIDIA" in device_name.upper():
+                return "/GPU:0", "NVIDIA"
+
+            # macOS 上的 Metal GPU
+            if sys.platform == "darwin":
+                return "/GPU:0", "Metal"
+
+            # 其他 GPU（可能是 AMD 等）
+            return "/GPU:0", "GPU"
+        except Exception:
+            # 如果无法获取详情，但有 GPU 可用
+            if sys.platform == "darwin":
+                return "/GPU:0", "Metal"
+            return "/GPU:0", "GPU"
+
+    return "/CPU:0", "CPU"
 
 
 @dataclass
@@ -86,9 +119,11 @@ class DataConfig:
 
 @dataclass
 class TrainConfig:
-    """训练相关配置，兼顾 GPU/CPU 回退。"""
+    """训练相关配置，兼顾 NVIDIA/Metal/CPU 多环境回退。"""
 
-    use_gpu: bool = field(default_factory=lambda: bool(tf.config.list_physical_devices("GPU")))
+    # 设备检测结果：(device_string, device_type)
+    _device_info: Tuple[str, str] = field(default_factory=detect_device)
+
     batch_size_autoencoder: int = 2048
     epochs_autoencoder: int = 50
     autoencoder_val_split: float = 0.2
@@ -98,6 +133,21 @@ class TrainConfig:
     embedding_dim: int = 150
     vocab_limit: int = 20_000  # 用于 Word2Vec 的词表上限
     max_sequences: Optional[int] = None  # Word2Vec 训练样本上限，用于小样本快速验证
+
+    @property
+    def device_string(self) -> str:
+        """获取 TensorFlow 设备字符串，如 '/GPU:0' 或 '/CPU:0'。"""
+        return self._device_info[0]
+
+    @property
+    def device_type(self) -> str:
+        """获取设备类型名称：'NVIDIA', 'Metal', 'GPU', 或 'CPU'。"""
+        return self._device_info[1]
+
+    @property
+    def use_gpu(self) -> bool:
+        """向后兼容：是否使用 GPU。"""
+        return self._device_info[1] != "CPU"
 
 
 @dataclass
