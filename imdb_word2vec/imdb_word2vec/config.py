@@ -75,7 +75,13 @@ class PathConfig:
 
     @property
     def final_mapped_path(self) -> Path:
-        return self.cache_dir / "final_mapped_vec.csv"
+        """Word2Vec 序列数据路径"""
+        return self.cache_dir / "word2vec_sequences.csv"
+
+    @property
+    def tabular_features_path(self) -> Path:
+        """Autoencoder 表格特征数据路径"""
+        return self.cache_dir / "tabular_features.csv"
 
     @property
     def vocab_path(self) -> Path:

@@ -407,18 +407,96 @@ def save_sequences_to_csv(
 
 # ========== 主入口 ==========
 
+def _generate_tabular_features(
+    movies_info_df: pd.DataFrame,
+    regional_titles_df: pd.DataFrame,
+    title_principals_df: Optional[pd.DataFrame],
+    vocab: Dict[str, int],
+) -> pd.DataFrame:
+    """
+    生成电影级别的表格特征，用于 Autoencoder 训练。
+    
+    输出：每行是一部电影的特征向量（离散特征 + 聚合特征）
+    """
+    logger.info("生成 Autoencoder 表格特征...")
+    
+    # 1. 基础离散特征：类型、评分等
+    tabular_df = movies_info_df.copy()
+    
+    # 映射离散特征为整数 ID
+    for col in ["genres1", "genres2", "genres3"]:
+        if col in tabular_df.columns:
+            tabular_df[col] = tabular_df[col].astype(str).apply(
+                lambda x: vocab.get(_add_prefix(x, "genre"), 0) if x != "\\N" else 0
+            )
+    
+    # 评分和投票数（数值特征）
+    if "averageRating" in tabular_df.columns:
+        tabular_df["averageRating"] = pd.to_numeric(tabular_df["averageRating"], errors="coerce").fillna(0)
+    if "numVotes" in tabular_df.columns:
+        tabular_df["numVotes"] = pd.to_numeric(tabular_df["numVotes"], errors="coerce").fillna(0)
+        # 对数变换以减少偏斜
+        tabular_df["numVotes_log"] = np.log1p(tabular_df["numVotes"])
+    
+    # isAdult
+    if "isAdult" in tabular_df.columns:
+        tabular_df["isAdult"] = pd.to_numeric(tabular_df["isAdult"], errors="coerce").fillna(0)
+    
+    # 2. 区域独热编码
+    if regional_titles_df is not None and not regional_titles_df.empty:
+        region_df = regional_titles_df[["tconst", "region"]].copy()
+        region_df["region"] = region_df["region"].fillna("\\N").astype(str)
+        region_dummies = pd.get_dummies(region_df["region"], prefix="region", dtype=int)
+        region_agg = pd.concat([region_df[["tconst"]], region_dummies], axis=1).groupby("tconst").max().reset_index()
+        tabular_df = tabular_df.merge(region_agg, on="tconst", how="left")
+    
+    # 3. 主演/导演数量（从 principals 聚合）
+    if title_principals_df is not None and not title_principals_df.empty:
+        # 演员数量
+        actor_counts = title_principals_df[
+            title_principals_df["category"].isin(["actor", "actress"])
+        ].groupby("tconst").size().reset_index(name="num_actors")
+        tabular_df = tabular_df.merge(actor_counts, on="tconst", how="left")
+        tabular_df["num_actors"] = tabular_df["num_actors"].fillna(0)
+        
+        # 主要角色类别
+        cat_counts = title_principals_df.groupby("tconst")["category"].nunique().reset_index(name="num_role_types")
+        tabular_df = tabular_df.merge(cat_counts, on="tconst", how="left")
+        tabular_df["num_role_types"] = tabular_df["num_role_types"].fillna(0)
+    
+    # 4. 选择最终特征列
+    feature_cols = []
+    
+    # 数值特征
+    for col in ["genres1", "genres2", "genres3", "averageRating", "numVotes_log", 
+                "isAdult", "num_actors", "num_role_types"]:
+        if col in tabular_df.columns:
+            feature_cols.append(col)
+    
+    # 区域独热特征
+    region_cols = [c for c in tabular_df.columns if c.startswith("region_")]
+    feature_cols.extend(region_cols)
+    
+    # 填充缺失值
+    result_df = tabular_df[["tconst"] + feature_cols].copy()
+    result_df = result_df.fillna(0)
+    
+    logger.info("表格特征维度: %d 行 × %d 列", len(result_df), len(feature_cols))
+    return result_df
+
+
 def run_feature_engineering(
     movies_info_df: pd.DataFrame,
     staff_df: pd.DataFrame,
     regional_titles_df: pd.DataFrame,
-) -> Tuple[Path, Path]:
+) -> Tuple[Path, Path, Path]:
     """
-    执行特征工程：生成适合 Word2Vec 的序列数据。
+    执行特征工程：生成 Word2Vec 序列数据和 Autoencoder 表格特征。
     
     Returns:
-        (sequences_path, vocab_path)
+        (sequences_path, tabular_path, vocab_path)
     """
-    logger.info("========== 开始特征工程（序列模式）==========")
+    logger.info("========== 开始特征工程 ==========")
     
     # 加载辅助数据
     cache_dir = CONFIG.paths.cache_dir
@@ -441,7 +519,8 @@ def run_feature_engineering(
         title_crew_df = pd.read_csv(crew_path)
         logger.info("加载 crew 数据: %d 行", len(title_crew_df))
     
-    # ========== 生成各类序列 ==========
+    # ==================== Part 1: Word2Vec 序列数据 ====================
+    logger.info("---------- 生成 Word2Vec 序列 ----------")
     all_sequences = []
     
     # 1. 人员-电影序列（最重要！）
@@ -479,7 +558,7 @@ def run_feature_engineering(
     # 打乱序列顺序
     random.shuffle(all_sequences)
     
-    # ========== 构建词汇表 ==========
+    # 构建词汇表
     vocab = build_vocab_from_sequences(all_sequences)
     
     # 保存词汇表
@@ -488,9 +567,23 @@ def run_feature_engineering(
     pd.Series(vocab).to_csv(vocab_path, header=False)
     logger.info("词汇表已保存: %s", vocab_path)
     
-    # ========== 保存序列数据 ==========
+    # 保存序列数据
     sequences_path = CONFIG.paths.final_mapped_path
     save_sequences_to_csv(all_sequences, vocab, sequences_path, max_seq_len=50)
     
+    # ==================== Part 2: Autoencoder 表格特征 ====================
+    logger.info("---------- 生成 Autoencoder 表格特征 ----------")
+    tabular_df = _generate_tabular_features(
+        movies_info_df, regional_titles_df, title_principals_df, vocab
+    )
+    
+    tabular_path = CONFIG.paths.tabular_features_path
+    tabular_df.to_csv(tabular_path, index=False)
+    logger.info("表格特征已保存: %s", tabular_path)
+    
     logger.info("========== 特征工程完成 ==========")
-    return sequences_path, vocab_path
+    logger.info("Word2Vec 序列: %s", sequences_path)
+    logger.info("Autoencoder 表格: %s", tabular_path)
+    logger.info("词汇表: %s", vocab_path)
+    
+    return sequences_path, tabular_path, vocab_path
