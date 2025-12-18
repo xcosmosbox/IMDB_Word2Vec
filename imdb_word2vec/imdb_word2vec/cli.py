@@ -87,7 +87,7 @@ def main() -> None:
 
     if args.command == "train":
         train_word2vec(
-            CONFIG.paths.fused_features_path,
+            CONFIG.paths.final_mapped_path,  # 使用离散整数序列，避免自编码器输出的连续值
             CONFIG.paths.vocab_path,
             vocab_limit=args.vocab_limit,
             max_sequences=args.max_seq,
@@ -105,7 +105,7 @@ def main() -> None:
         run_feature_engineering(movies_info_df, staff_df, regional_titles_df)
         train_autoencoder(CONFIG.paths.final_mapped_path, max_rows=args.max_rows)
         train_word2vec(
-            CONFIG.paths.fused_features_path,
+            CONFIG.paths.final_mapped_path,  # 使用离散整数序列
             CONFIG.paths.vocab_path,
             vocab_limit=args.vocab_limit,
             max_sequences=args.max_seq,
