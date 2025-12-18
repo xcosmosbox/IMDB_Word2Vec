@@ -49,6 +49,19 @@ def parse_args() -> argparse.Namespace:
     train_parser.add_argument("--max-seq", type=int, default=None, help="序列数上限，便于小样本验证")
     train_parser.add_argument("--vocab-limit", type=int, default=CONFIG.train.vocab_limit, help="词表上限")
 
+    # eval baselines
+    eval_parser = subparsers.add_parser("eval", help="基线验证与报告生成")
+    eval_parser.add_argument(
+        "--mode",
+        choices=["ae", "w2v", "combo", "all"],
+        default="all",
+        help="选择评估对象：自编码器/Word2Vec/拼接或全部",
+    )
+    eval_parser.add_argument("--sample-rows", type=int, default=200, help="AE/拼接的采样行数")
+    eval_parser.add_argument("--sample-vocab", type=int, default=200, help="Word2Vec 采样 token 数")
+    eval_parser.add_argument("--kmeans-k", type=int, default=8, help="聚类簇数")
+    eval_parser.add_argument("--top-k", type=int, default=5, help="相似度 TopK")
+
     # all
     all_parser = subparsers.add_parser("all", help="串行执行全部步骤")
     all_parser.add_argument("--subset-rows", type=int, default=None, help="预处理采样行数")
@@ -92,6 +105,19 @@ def main() -> None:
             vocab_limit=args.vocab_limit,
             max_sequences=args.max_seq,
         )
+        return
+
+    if args.command == "eval":
+        from .tests.eval_baselines import EvalConfig, run_eval
+
+        cfg = EvalConfig(
+            sample_rows=args.sample_rows,
+            sample_vocab=args.sample_vocab,
+            top_k=args.top_k,
+            kmeans_k=args.kmeans_k,
+        )
+        report_path = run_eval(args.mode, cfg)
+        logger.info("评估完成，报告输出：%s", report_path)
         return
 
     if args.command == "all":
