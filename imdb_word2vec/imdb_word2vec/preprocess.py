@@ -108,10 +108,13 @@ def preprocess_all(
     movies_info = title_basics.merge(original_titles[["tconst", "title"]], on="tconst", how="left")
     movies_info = movies_info.merge(title_ratings[["tconst", "averageRating", "numVotes"]], on="tconst", how="left")
 
+    # 使用非链式赋值避免 FutureWarning，并保持数据一致性
     avg_median = movies_info["averageRating"].median()
     votes_median = movies_info["numVotes"].median()
-    movies_info["averageRating"].fillna(avg_median, inplace=True)
-    movies_info["numVotes"].fillna(votes_median, inplace=True)
+    movies_info = movies_info.assign(
+        averageRating=movies_info["averageRating"].fillna(avg_median),
+        numVotes=movies_info["numVotes"].fillna(votes_median),
+    )
     movies_info["averageRating"] = movies_info["averageRating"].round().astype(int)
     movies_info["numVotes"] = movies_info["numVotes"].apply(lambda x: int(round(x / 10) * 10))
     movies_info[["genres1", "genres2", "genres3"]] = movies_info["genres"].str.split(",", expand=True).fillna("\\N")
