@@ -8,7 +8,6 @@ import pandas as pd
 from .config import CONFIG
 from .download import download_all
 from .feature_engineering import run_feature_engineering
-from .fusion import train_autoencoder
 from .logging_utils import setup_logging
 from .preprocess import preprocess_all
 from .training import train_word2vec
@@ -34,40 +33,33 @@ def parse_args() -> argparse.Namespace:
 
     # preprocess
     preprocess_parser = subparsers.add_parser("preprocess", help="清洗并生成基础表")
-    preprocess_parser.add_argument("--subset-rows", type=int, default=None, help="可选行数上限，用于采样")
+    preprocess_parser.add_argument("--subset-rows", type=int, default=None, help="可选行数上限")
 
     # feature engineering
-    fe_parser = subparsers.add_parser("fe", help="特征工程与向量化")
-    fe_parser.add_argument("--subset-rows", type=int, default=None, help="可选行数上限，用于采样")
-
-    # fusion
-    fusion_parser = subparsers.add_parser("fusion", help="自编码器融合")
-    fusion_parser.add_argument("--max-rows", type=int, default=None, help="训练行数上限，便于小样本验证")
+    fe_parser = subparsers.add_parser("fe", help="特征工程：生成 Word2Vec 序列数据")
+    fe_parser.add_argument("--subset-rows", type=int, default=None, help="可选行数上限")
 
     # train
     train_parser = subparsers.add_parser("train", help="Word2Vec 训练")
-    train_parser.add_argument("--max-seq", type=int, default=None, help="序列数上限，便于小样本验证")
+    train_parser.add_argument("--max-seq", type=int, default=None, help="序列数上限")
     train_parser.add_argument("--vocab-limit", type=int, default=CONFIG.train.vocab_limit, help="词表上限")
 
-    # eval baselines
+    # all: 完整流程
+    all_parser = subparsers.add_parser("all", help="执行完整流程: download → preprocess → fe → train")
+    all_parser.add_argument("--subset-rows", type=int, default=None, help="预处理采样行数")
+    all_parser.add_argument("--max-seq", type=int, default=None, help="Word2Vec 序列数上限")
+    all_parser.add_argument("--vocab-limit", type=int, default=CONFIG.train.vocab_limit, help="词表上限")
+
+    # eval baselines（可选）
     eval_parser = subparsers.add_parser("eval", help="基线验证与报告生成")
     eval_parser.add_argument(
         "--mode",
-        choices=["ae", "w2v", "combo", "all"],
-        default="all",
-        help="选择评估对象：自编码器/Word2Vec/拼接或全部",
+        choices=["w2v", "all"],
+        default="w2v",
+        help="选择评估对象",
     )
-    eval_parser.add_argument("--sample-rows", type=int, default=200, help="AE/拼接的采样行数")
-    eval_parser.add_argument("--sample-vocab", type=int, default=200, help="Word2Vec 采样 token 数")
-    eval_parser.add_argument("--kmeans-k", type=int, default=8, help="聚类簇数")
+    eval_parser.add_argument("--sample-vocab", type=int, default=200, help="采样 token 数")
     eval_parser.add_argument("--top-k", type=int, default=5, help="相似度 TopK")
-
-    # all
-    all_parser = subparsers.add_parser("all", help="串行执行全部步骤")
-    all_parser.add_argument("--subset-rows", type=int, default=None, help="预处理采样行数")
-    all_parser.add_argument("--max-rows", type=int, default=None, help="融合阶段行数上限")
-    all_parser.add_argument("--max-seq", type=int, default=None, help="Word2Vec 序列数上限")
-    all_parser.add_argument("--vocab-limit", type=int, default=CONFIG.train.vocab_limit, help="词表上限")
 
     return parser.parse_args()
 
@@ -94,13 +86,9 @@ def main() -> None:
         run_feature_engineering(movies_info_df, staff_df, regional_titles_df)
         return
 
-    if args.command == "fusion":
-        train_autoencoder(CONFIG.paths.final_mapped_path, max_rows=args.max_rows)
-        return
-
     if args.command == "train":
         train_word2vec(
-            CONFIG.paths.final_mapped_path,  # 使用离散整数序列，避免自编码器输出的连续值
+            CONFIG.paths.final_mapped_path,
             CONFIG.paths.vocab_path,
             vocab_limit=args.vocab_limit,
             max_sequences=args.max_seq,
@@ -108,38 +96,40 @@ def main() -> None:
         return
 
     if args.command == "eval":
-        from .tests.eval_baselines import EvalConfig, run_eval
-
-        cfg = EvalConfig(
-            sample_rows=args.sample_rows,
-            sample_vocab=args.sample_vocab,
-            top_k=args.top_k,
-            kmeans_k=args.kmeans_k,
-        )
-        report_path = run_eval(args.mode, cfg)
-        logger.info("评估完成，报告输出：%s", report_path)
+        # 简化的评估
+        logger.info("评估功能待实现")
         return
 
     if args.command == "all":
         if args.subset_rows is not None:
             CONFIG.data.subset_rows = args.subset_rows
 
+        # Step 1: Download
+        logger.info("========== Step 1/4: 下载数据 ==========")
         paths = download_all()
+        
+        # Step 2: Preprocess
+        logger.info("========== Step 2/4: 数据预处理 ==========")
         movies_info_df, staff_df, regional_titles_df = preprocess_all(
             paths, subset_rows=CONFIG.data.subset_rows
         )
+        
+        # Step 3: Feature Engineering (序列生成)
+        logger.info("========== Step 3/4: 特征工程 ==========")
         run_feature_engineering(movies_info_df, staff_df, regional_titles_df)
-        train_autoencoder(CONFIG.paths.final_mapped_path, max_rows=args.max_rows)
+        
+        # Step 4: Train Word2Vec
+        logger.info("========== Step 4/4: Word2Vec 训练 ==========")
         train_word2vec(
-            CONFIG.paths.final_mapped_path,  # 使用离散整数序列
+            CONFIG.paths.final_mapped_path,
             CONFIG.paths.vocab_path,
             vocab_limit=args.vocab_limit,
             max_sequences=args.max_seq,
         )
+        
+        logger.info("========== 全流程完成 ==========")
         return
 
 
 if __name__ == "__main__":
     main()
-
-
