@@ -83,15 +83,16 @@ def train_autoencoder(
     with strategy.scope():
         input_layer = Input(shape=(data_std.shape[1],))
         x = Dense(512, activation="relu")(input_layer)
-        x = Dropout(0.25)(x)
+        x = Dropout(0.1)(x)
         x = Dense(256, activation="relu")(x)
-        x = Dropout(0.25)(x)
+        x = Dropout(0.1)(x)
         x = Dense(128, activation="relu")(x)
-        x = Dropout(0.25)(x)
-        output_layer = Dense(data_std.shape[1], activation="relu")(x)
+        x = Dropout(0.1)(x)
+        output_layer = Dense(data_std.shape[1], activation=None)(x)
 
         model: Model = Model(inputs=input_layer, outputs=output_layer)
-        model.compile(optimizer="adam", loss="mse")
+        opt = tf.keras.optimizers.Adam(learning_rate=1e-4)
+        model.compile(optimizer=opt, loss="mse")
         logger.info("自编码器结构: 输入维度=%d", data_std.shape[1])
 
     ckpt_path = CONFIG.paths.best_model_path
