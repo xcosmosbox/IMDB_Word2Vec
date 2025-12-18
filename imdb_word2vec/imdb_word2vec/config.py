@@ -141,12 +141,22 @@ class TrainConfig:
     max_sequences: Optional[int] = None  # 训练语料行数上限
     seq_chunk_size: int = 100_000  # 分块生成 skip-gram 样本的序列块大小
 
+    # 数据集缓存与 shuffle 配置
+    shuffle_buffer_size: int = 50_000  # shuffle 缓冲区大小，越大随机性越好但内存占用越多
+    precache_samples: bool = True  # 是否预先生成所有样本到内存（加速训练，但需要更多内存）
+    precache_max_samples: Optional[int] = 5_000_000  # 预缓存的最大样本数，None 表示全部缓存
+    chunked_epoch_training: bool = True  # 内存不足时，每个 epoch 加载不同数据块（确保全量数据都被训练）
+
+    # 并行样本生成配置
+    parallel_workers: Optional[int] = None  # 并行生成样本的进程数，None 表示自动检测（CPU核心数-1）
+    parallel_chunk_size: int = 10000  # 每个进程处理的序列数
+
     # 梯度累积（显存紧张时可开启）
     accum_steps_word2vec: int = 1  # >1 时开启梯度累积
     accum_steps_autoencoder: int = 1
 
     batch_size_autoencoder: int = 1024
-    epochs_autoencoder: int = 200
+    epochs_autoencoder: int = 50
     autoencoder_val_split: float = 0.2
     batch_size_word2vec: int = 1024
     embedding_dim: int = 256

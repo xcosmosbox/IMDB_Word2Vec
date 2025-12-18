@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -17,381 +17,480 @@ random.seed(CONFIG.random_seed)
 
 # ========== 实体类型前缀定义 ==========
 ENTITY_PREFIXES = {
-    "movie": "MOVIE:",       # 电影 tconst
-    "person": "PERSON:",     # 人员 nconst（通用）
-    "actor": "ACTOR:",       # 演员
-    "director": "DIRECTOR:", # 导演
-    "writer": "WRITER:",     # 编剧
-    "genre": "GENRE:",       # 类型
-    "region": "REGION:",     # 地区
-    "category": "ROLE:",     # 角色类别（actor, actress, director 等）
-    "profession": "PROF:",   # 职业
-    "series": "SERIES:",     # 系列（parentTconst）
+    "movie": "MOV_",        # 电影 tconst
+    "person": "PER_",       # 人员 nconst（通用）
+    "actor": "ACT_",        # 演员
+    "director": "DIR_",     # 导演
+    "writer": "WRI_",       # 编剧
+    "genre": "GEN_",        # 类型
+    "region": "REG_",       # 地区
+    "category": "ROL_",     # 角色类别（actor, actress, director 等）
+    "profession": "PRO_",   # 职业
+    "series": "SER_",       # 系列（parentTconst）
+    "rating": "RAT_",       # 评分等级
+    "year": "YEA_",         # 年份（如果需要）
 }
 
 
 def _add_prefix(value: str, prefix_type: str) -> str:
     """为实体值添加类型前缀。"""
-    if value in ("\\N", "", "0", "1") or pd.isna(value):
-        return str(value)  # 特殊值不加前缀
+    if value in ("\\N", "", "nan", "None") or pd.isna(value):
+        return None  # 返回 None 以便后续过滤
     prefix = ENTITY_PREFIXES.get(prefix_type, "")
     return f"{prefix}{value}"
 
 
-def _add_prefix_to_column(df: pd.DataFrame, col_name: str, prefix_type: str) -> pd.DataFrame:
-    """为 DataFrame 的指定列添加类型前缀。"""
-    df = df.copy()
-    df[col_name] = df[col_name].astype(str).apply(lambda x: _add_prefix(x, prefix_type))
-    return df
+# ========== 序列生成器 ==========
+
+def _generate_person_movie_sequences(
+    staff_df: pd.DataFrame,
+    title_crew_df: pd.DataFrame,
+    title_principals_df: pd.DataFrame,
+) -> List[List[str]]:
+    """
+    生成 人员 → 电影 序列。
+    
+    序列形式: [PERSON:nm001, MOVIE:tt001, MOVIE:tt002, MOVIE:tt003, ...]
+    每个人的所有作品形成一个序列，让 Word2Vec 学习到 "同一个人参与的电影是相关的"。
+    """
+    sequences = []
+    
+    # 1. 从 staff_df 的 knownForTitles 提取
+    logger.info("从 staff_df 提取人员-代表作序列...")
+    for _, row in tqdm(staff_df.iterrows(), total=len(staff_df), desc="人员代表作序列"):
+        person = _add_prefix(str(row["nconst"]), "person")
+        if person is None:
+            continue
+        
+        movies = []
+        for col in ["knownForTitle1", "knownForTitle2", "knownForTitle3", "knownForTitle4"]:
+            if col in row and pd.notna(row[col]) and row[col] != "\\N":
+                movie = _add_prefix(str(row[col]), "movie")
+                if movie:
+                    movies.append(movie)
+        
+        if len(movies) >= 1:
+            seq = [person] + movies
+            sequences.append(seq)
+    
+    # 2. 从 title_principals 提取更详细的演员-电影关系
+    if title_principals_df is not None and not title_principals_df.empty:
+        logger.info("从 principals 提取演员-电影序列...")
+        # 按人员聚合所有参演电影
+        person_movies = title_principals_df.groupby("nconst")["tconst"].apply(list).to_dict()
+        
+        for nconst, tconsts in tqdm(person_movies.items(), desc="演员参演序列"):
+            person = _add_prefix(str(nconst), "person")
+            if person is None:
+                continue
+            
+            movies = [_add_prefix(str(t), "movie") for t in tconsts if t != "\\N"]
+            movies = [m for m in movies if m is not None]
+            
+            if len(movies) >= 2:  # 至少 2 部电影才有共现意义
+                seq = [person] + movies
+                sequences.append(seq)
+    
+    # 3. 从 title_crew 提取导演/编剧-电影关系
+    if title_crew_df is not None and not title_crew_df.empty:
+        logger.info("从 crew 提取导演/编剧序列...")
+        
+        # 导演
+        director_movies = {}
+        for _, row in title_crew_df.iterrows():
+            tconst = str(row["tconst"])
+            directors_str = str(row.get("directors_nconst", "\\N"))
+            if directors_str != "\\N":
+                for d in directors_str.split(","):
+                    if d and d != "\\N":
+                        if d not in director_movies:
+                            director_movies[d] = []
+                        director_movies[d].append(tconst)
+        
+        for nconst, tconsts in director_movies.items():
+            person = _add_prefix(nconst, "director")
+            if person is None:
+                continue
+            movies = [_add_prefix(t, "movie") for t in tconsts]
+            movies = [m for m in movies if m is not None]
+            if len(movies) >= 2:
+                seq = [person] + movies
+                sequences.append(seq)
+        
+        # 编剧
+        writer_movies = {}
+        for _, row in title_crew_df.iterrows():
+            tconst = str(row["tconst"])
+            writers_str = str(row.get("writers_nconst", "\\N"))
+            if writers_str != "\\N":
+                for w in writers_str.split(","):
+                    if w and w != "\\N":
+                        if w not in writer_movies:
+                            writer_movies[w] = []
+                        writer_movies[w].append(tconst)
+        
+        for nconst, tconsts in writer_movies.items():
+            person = _add_prefix(nconst, "writer")
+            if person is None:
+                continue
+            movies = [_add_prefix(t, "movie") for t in tconsts]
+            movies = [m for m in movies if m is not None]
+            if len(movies) >= 2:
+                seq = [person] + movies
+                sequences.append(seq)
+    
+    logger.info("人员-电影序列数: %d", len(sequences))
+    return sequences
 
 
-def _register_column(df: pd.DataFrame, col_name: str, vocab: Dict[str, int], counter: int) -> int:
-    """对单列数据进行随机顺序注册，减少顺序性偏差。"""
-    values = df[col_name].astype(str).tolist()
-    random.shuffle(values)
-    for item in values:
-        if item not in vocab:
-            counter += 1
-            vocab[item] = counter
-    return counter
+def _generate_movie_context_sequences(
+    movies_info_df: pd.DataFrame,
+    title_principals_df: pd.DataFrame,
+    title_crew_df: pd.DataFrame,
+) -> List[List[str]]:
+    """
+    生成 电影 → 上下文 序列。
+    
+    序列形式: [MOVIE:tt001, GENRE:Action, GENRE:Drama, DIRECTOR:nm001, ACTOR:nm002, ...]
+    让 Word2Vec 学习到 "电影的类型、导演、演员是相关的"。
+    """
+    sequences = []
+    
+    # 预处理 principals 和 crew 为字典便于查询
+    movie_actors = {}
+    movie_directors = {}
+    
+    if title_principals_df is not None and not title_principals_df.empty:
+        for _, row in title_principals_df.iterrows():
+            tconst = str(row["tconst"])
+            nconst = str(row["nconst"])
+            category = str(row.get("category", ""))
+            
+            if tconst not in movie_actors:
+                movie_actors[tconst] = []
+            
+            if category in ("actor", "actress", "self"):
+                movie_actors[tconst].append(nconst)
+    
+    if title_crew_df is not None and not title_crew_df.empty:
+        for _, row in title_crew_df.iterrows():
+            tconst = str(row["tconst"])
+            directors_str = str(row.get("directors_nconst", "\\N"))
+            if directors_str != "\\N":
+                movie_directors[tconst] = [d for d in directors_str.split(",") if d and d != "\\N"]
+    
+    logger.info("生成电影-上下文序列...")
+    for _, row in tqdm(movies_info_df.iterrows(), total=len(movies_info_df), desc="电影上下文序列"):
+        tconst = str(row["tconst"])
+        movie = _add_prefix(tconst, "movie")
+        if movie is None:
+            continue
+        
+        context = [movie]
+        
+        # 添加类型
+        for col in ["genres1", "genres2", "genres3"]:
+            if col in row and pd.notna(row[col]) and row[col] != "\\N":
+                genre = _add_prefix(str(row[col]), "genre")
+                if genre:
+                    context.append(genre)
+        
+        # 添加评分等级（离散化）
+        if "averageRating" in row:
+            try:
+                rating = int(float(row["averageRating"]))
+                rating_token = _add_prefix(str(rating), "rating")
+                if rating_token:
+                    context.append(rating_token)
+            except (ValueError, TypeError):
+                pass
+        
+        # 添加导演
+        if tconst in movie_directors:
+            for d in movie_directors[tconst][:3]:  # 最多 3 个导演
+                director = _add_prefix(d, "director")
+                if director:
+                    context.append(director)
+        
+        # 添加主要演员
+        if tconst in movie_actors:
+            for a in movie_actors[tconst][:5]:  # 最多 5 个演员
+                actor = _add_prefix(a, "actor")
+                if actor:
+                    context.append(actor)
+        
+        if len(context) >= 3:  # 电影 + 至少 2 个上下文
+            sequences.append(context)
+    
+    logger.info("电影-上下文序列数: %d", len(sequences))
+    return sequences
 
 
-def build_vocab(
-    movies_info_df: pd.DataFrame, staff_df: pd.DataFrame, regional_titles_df: pd.DataFrame
-) -> Dict[str, int]:
-    """构建词汇表，涵盖影片、人员、区域、标题以及 principals/episode 关系字段。"""
-    vocab: Dict[str, int] = {"0": 0, "1": 1}
+def _generate_series_episode_sequences(
+    title_episode_df: pd.DataFrame,
+) -> List[List[str]]:
+    """
+    生成 系列 → 剧集 序列。
+    
+    序列形式: [SERIES:tt100, MOVIE:tt101, MOVIE:tt102, MOVIE:tt103]
+    让 Word2Vec 学习到 "同一系列的作品是相关的"。
+    """
+    sequences = []
+    
+    if title_episode_df is None or title_episode_df.empty:
+        logger.warning("无 episode 数据，跳过系列-剧集序列")
+        return sequences
+    
+    # 按系列聚合所有剧集
+    series_episodes = title_episode_df.groupby("parentTconst")["tconst"].apply(list).to_dict()
+    
+    logger.info("生成系列-剧集序列...")
+    for parent_tconst, tconsts in tqdm(series_episodes.items(), desc="系列剧集序列"):
+        if parent_tconst == "\\N" or pd.isna(parent_tconst):
+            continue
+        
+        series = _add_prefix(str(parent_tconst), "series")
+        if series is None:
+            continue
+        
+        episodes = [_add_prefix(str(t), "movie") for t in tconsts]
+        episodes = [e for e in episodes if e is not None]
+        
+        if len(episodes) >= 2:  # 至少 2 集才有意义
+            seq = [series] + episodes
+            sequences.append(seq)
+    
+    logger.info("系列-剧集序列数: %d", len(sequences))
+    return sequences
+
+
+def _generate_coactor_sequences(
+    title_principals_df: pd.DataFrame,
+    min_coactors: int = 2,
+    max_coactors: int = 10,
+) -> List[List[str]]:
+    """
+    生成 合作演员 序列。
+    
+    序列形式: [ACTOR:nm001, ACTOR:nm002, ACTOR:nm003, ...]
+    同一部电影的演员放在一起，让 Word2Vec 学习到 "经常合作的演员"。
+    """
+    sequences = []
+    
+    if title_principals_df is None or title_principals_df.empty:
+        logger.warning("无 principals 数据，跳过合作演员序列")
+        return sequences
+    
+    # 按电影聚合演员
+    movie_cast = (
+        title_principals_df[title_principals_df["category"].isin(["actor", "actress", "self"])]
+        .groupby("tconst")["nconst"]
+        .apply(list)
+        .to_dict()
+    )
+    
+    logger.info("生成合作演员序列...")
+    for tconst, actors in tqdm(movie_cast.items(), desc="合作演员序列"):
+        if len(actors) < min_coactors:
+            continue
+        
+        # 限制演员数量
+        actors = actors[:max_coactors]
+        
+        actor_tokens = [_add_prefix(str(a), "actor") for a in actors]
+        actor_tokens = [t for t in actor_tokens if t is not None]
+        
+        if len(actor_tokens) >= min_coactors:
+            sequences.append(actor_tokens)
+    
+    logger.info("合作演员序列数: %d", len(sequences))
+    return sequences
+
+
+def _generate_genre_movie_sequences(
+    movies_info_df: pd.DataFrame,
+    max_movies_per_genre: int = 100,
+) -> List[List[str]]:
+    """
+    生成 类型 → 电影 序列。
+    
+    序列形式: [GENRE:Action, MOVIE:tt001, MOVIE:tt002, ...]
+    同类型的电影放在一起，让 Word2Vec 学习到 "同类型电影是相关的"。
+    """
+    sequences = []
+    
+    # 收集每个类型下的电影
+    genre_movies = {}
+    
+    for _, row in movies_info_df.iterrows():
+        tconst = str(row["tconst"])
+        for col in ["genres1", "genres2", "genres3"]:
+            if col in row and pd.notna(row[col]) and row[col] != "\\N":
+                genre = str(row[col])
+                if genre not in genre_movies:
+                    genre_movies[genre] = []
+                genre_movies[genre].append(tconst)
+    
+    logger.info("生成类型-电影序列...")
+    for genre, tconsts in tqdm(genre_movies.items(), desc="类型电影序列"):
+        genre_token = _add_prefix(genre, "genre")
+        if genre_token is None:
+            continue
+        
+        # 随机采样避免序列过长
+        if len(tconsts) > max_movies_per_genre:
+            tconsts = random.sample(tconsts, max_movies_per_genre)
+        
+        movies = [_add_prefix(t, "movie") for t in tconsts]
+        movies = [m for m in movies if m is not None]
+        
+        if len(movies) >= 5:  # 至少 5 部电影
+            seq = [genre_token] + movies
+            sequences.append(seq)
+    
+    logger.info("类型-电影序列数: %d", len(sequences))
+    return sequences
+
+
+# ========== 词表构建 ==========
+
+def build_vocab_from_sequences(sequences: List[List[str]]) -> Dict[str, int]:
+    """从序列中构建词汇表。"""
+    vocab: Dict[str, int] = {"<PAD>": 0, "<UNK>": 1}
     counter = 1
-
-    # 影片类型
-    for col in tqdm(["genres1", "genres2", "genres3"], desc="注册影片类型", disable=not CONFIG.data.enable_tqdm):
-        counter = _register_column(movies_info_df, col, vocab, counter)
-
-    # 区域与别名类型
-    for col in tqdm(["region", "types", "title"], desc="注册区域与别名", disable=not CONFIG.data.enable_tqdm):
-        counter = _register_column(regional_titles_df, col, vocab, counter)
-
-    # 人员职业
-    for col in tqdm(
-        ["primaryProfession_top1", "primaryProfession_top2", "primaryProfession_top3"],
-        desc="注册人员职业",
-        disable=not CONFIG.data.enable_tqdm,
-    ):
-        counter = _register_column(staff_df, col, vocab, counter)
-
-    # 影片与人员标识、标题及 principals/episode 信息
-    for col in tqdm(
-        ["tconst", "title", "principalCat1", "principalCat2", "principalCat3", "parentTconst"],
-        desc="注册影片标识/标题/主类别/父标题",
-        disable=not CONFIG.data.enable_tqdm,
-    ):
-        counter = _register_column(movies_info_df, col, vocab, counter)
-    counter = _register_column(staff_df, "nconst", vocab, counter)
-
-    # ========== 从 principals 补充 category 和 nconst（带前缀）==========
-    principals_path = CONFIG.paths.cache_dir / "title_principals_df.csv"
-    if principals_path.exists():
-        principals_df = pd.read_csv(principals_path)
-        if "category" in principals_df.columns:
-            # 添加角色类别前缀
-            principals_prefixed = _add_prefix_to_column(principals_df, "category", "category")
-            counter = _register_column(principals_prefixed, "category", vocab, counter)
-            logger.info("从 principals 注册 category 值（带 ROLE: 前缀）")
-        if "nconst" in principals_df.columns:
-            # 添加人员前缀
-            principals_prefixed = _add_prefix_to_column(principals_df, "nconst", "person")
-            counter = _register_column(principals_prefixed, "nconst", vocab, counter)
-            logger.info("从 principals 注册 nconst 值（带 PERSON: 前缀）")
-        if "tconst" in principals_df.columns:
-            # 添加电影前缀
-            principals_prefixed = _add_prefix_to_column(principals_df, "tconst", "movie")
-            counter = _register_column(principals_prefixed, "tconst", vocab, counter)
-            logger.info("从 principals 注册 tconst 值（带 MOVIE: 前缀）")
-
-    # ========== 从 episode 补充 parentTconst 和 tconst（带前缀）==========
-    episode_path = CONFIG.paths.cache_dir / "title_episode_df.csv"
-    if episode_path.exists():
-        episode_df = pd.read_csv(episode_path)
-        if "parentTconst" in episode_df.columns:
-            # 添加系列前缀
-            episode_prefixed = _add_prefix_to_column(episode_df, "parentTconst", "series")
-            counter = _register_column(episode_prefixed, "parentTconst", vocab, counter)
-            logger.info("从 episode 注册 parentTconst 值（带 SERIES: 前缀）")
-        if "tconst" in episode_df.columns:
-            # 添加电影前缀
-            episode_prefixed = _add_prefix_to_column(episode_df, "tconst", "movie")
-            counter = _register_column(episode_prefixed, "tconst", vocab, counter)
-            logger.info("从 episode 注册 tconst 值（带 MOVIE: 前缀）")
-
-    logger.info("词汇表规模：%d", len(vocab))
-    vocab_path = CONFIG.paths.vocab_path
-    vocab_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.Series(vocab).to_csv(vocab_path, header=False)
-    logger.info("词汇表已保存：%s", vocab_path)
+    
+    all_tokens = set()
+    for seq in sequences:
+        all_tokens.update(seq)
+    
+    # 随机打乱以避免顺序偏差
+    all_tokens_list = list(all_tokens)
+    random.shuffle(all_tokens_list)
+    
+    for token in tqdm(all_tokens_list, desc="构建词汇表"):
+        if token not in vocab:
+            counter += 1
+            vocab[token] = counter
+    
+    logger.info("词汇表规模: %d", len(vocab))
     return vocab
 
 
-def _region_type_one_hot(regional_titles_df: pd.DataFrame) -> pd.DataFrame:
-    """对区域与类型字段进行独热编码并按影片聚合。"""
-    df = regional_titles_df.copy()
-    df["region"] = df["region"].fillna("\\N").astype(str)
-    df["types"] = df["types"].fillna("\\N").astype(str)
-
-    region_dummies = pd.get_dummies(df["region"], prefix="region_class", dtype=int)
-    type_dummies = pd.get_dummies(df["types"], prefix="movie_type", dtype=int)
-
-    region_agg = pd.concat([df[["tconst"]], region_dummies], axis=1).groupby("tconst").max()
-    type_agg = pd.concat([df[["tconst"]], type_dummies], axis=1).groupby("tconst").max()
-
-    combined = region_agg.join(type_agg, how="outer").reset_index().fillna(0)
-    # 仅对独热列转为整数，保留 tconst 为字符串
-    for col in combined.columns:
-        if col != "tconst":
-            combined[col] = combined[col].astype(int)
-    return combined
-
-
-def merge_regional_features(
-    movies_info_df: pd.DataFrame, regional_titles_df: pd.DataFrame
-) -> pd.DataFrame:
-    """为影片添加区域与类型独热特征。"""
-    combined = _region_type_one_hot(regional_titles_df)
-    merged = movies_info_df.merge(combined, on="tconst", how="left").fillna(0)
-    logger.info("区域与类型特征列数：%d", combined.shape[1] - 1)
-    return merged
-
-
-def merge_staff_movies(
-    movies_info_regional_df: pd.DataFrame, staff_df: pd.DataFrame
-) -> pd.DataFrame:
-    """将人员代表作与影片特征表关联，得到最终训练表。"""
-    staff_melted = staff_df.melt(
-        id_vars=["nconst"],
-        value_vars=["knownForTitle1", "knownForTitle2", "knownForTitle3", "knownForTitle4"],
-        var_name="knownForTitleNumber",
-        value_name="knownForTitle",
-    )
-    staff_melted = staff_melted.dropna(subset=["knownForTitle"])
-    staff_expanded = staff_melted[["nconst", "knownForTitle"]]
-
-    merged_df = staff_expanded.merge(
-        movies_info_regional_df, left_on="knownForTitle", right_on="tconst", how="inner"
-    )
-    merged_df = merged_df.drop(columns=["knownForTitle"])
-    logger.info("人员-影片融合表行数：%d", len(merged_df))
-    return merged_df
-
-
-def vectorize_dataframe(df: pd.DataFrame, vocab: Dict[str, int]) -> pd.DataFrame:
-    """将非整数列映射为整数索引，便于后续模型训练。"""
-    for col in df.columns:
-        if not pd.api.types.is_integer_dtype(df[col]):
-            df[col] = df[col].astype(str).map(lambda x: vocab.get(x, x))
-    return df
-
-
-def _build_principals_sequences(principals_path: Path, vocab: Dict[str, int]) -> pd.DataFrame:
-    """从 title_principals 构建演员-电影共现序列，增强协同关系学习。
-
-    每条记录生成一个序列：[nconst, tconst, category]
-    这样 Word2Vec 可以学习到 "演员-电影-角色类型" 的共现关系。
+def save_sequences_to_csv(
+    sequences: List[List[str]],
+    vocab: Dict[str, int],
+    output_path: Path,
+    max_seq_len: int = 50,
+) -> None:
     """
-    if not principals_path.exists():
-        logger.warning("title_principals_df.csv 不存在，跳过演员-电影序列生成")
-        return pd.DataFrame()
-
-    principals_df = pd.read_csv(principals_path)
-    # 只保留演员/演员相关的记录，这些关系最有价值
-    actor_roles = principals_df[principals_df["category"].isin(["actor", "actress", "self"])]
-
-    if actor_roles.empty:
-        logger.warning("principals 中无演员记录")
-        return pd.DataFrame()
-
-    # 构建序列：[nconst, tconst, category]（使用实体前缀）
-    sequences = []
-    for _, row in tqdm(actor_roles.iterrows(), total=len(actor_roles), desc="生成演员-电影序列", disable=not CONFIG.data.enable_tqdm):
-        # 添加实体类型前缀以匹配词表
-        nconst = _add_prefix(str(row["nconst"]), "person")
-        tconst = _add_prefix(str(row["tconst"]), "movie")
-        category = _add_prefix(str(row["category"]), "category")
-
-        # 映射为整数索引
-        seq = [
-            vocab.get(nconst, 0),
-            vocab.get(tconst, 0),
-            vocab.get(category, 0),
-        ]
-        sequences.append(seq)
-
-    seq_df = pd.DataFrame(sequences, columns=["nconst_id", "tconst_id", "category_id"])
-    logger.info("生成演员-电影序列数：%d", len(seq_df))
-    return seq_df
-
-
-def _build_episode_sequences(episode_path: Path, vocab: Dict[str, int]) -> pd.DataFrame:
-    """从 title_episode 构建剧集-系列共现序列，学习系列内作品关联。
-
-    每条记录生成一个序列：[tconst(剧集), parentTconst(系列)]
-    这样 Word2Vec 可以学习到 "剧集 ↔ 系列" 的归属关系。
+    将序列保存为 CSV 文件。
+    
+    每行是一个序列，用整数 ID 表示，短序列用 0 填充。
     """
-    if not episode_path.exists():
-        logger.warning("title_episode_df.csv 不存在，跳过剧集-系列序列生成")
-        return pd.DataFrame()
-
-    episode_df = pd.read_csv(episode_path)
-    # 过滤掉无效的父标题
-    valid_episodes = episode_df[
-        (episode_df["parentTconst"].notna()) &
-        (episode_df["parentTconst"] != "\\N") &
-        (episode_df["tconst"] != episode_df["parentTconst"])  # 排除自引用
-    ]
-
-    if valid_episodes.empty:
-        logger.warning("episode 中无有效剧集-系列关系")
-        return pd.DataFrame()
-
-    # 构建序列：[tconst, parentTconst]（使用实体前缀）
-    sequences = []
-    for _, row in tqdm(valid_episodes.iterrows(), total=len(valid_episodes), desc="生成剧集-系列序列", disable=not CONFIG.data.enable_tqdm):
-        # 添加实体类型前缀以匹配词表
-        tconst = _add_prefix(str(row["tconst"]), "movie")
-        parent_tconst = _add_prefix(str(row["parentTconst"]), "series")
-
-        # 映射为整数索引
-        seq = [
-            vocab.get(tconst, 0),
-            vocab.get(parent_tconst, 0),
-        ]
-        sequences.append(seq)
-
-    seq_df = pd.DataFrame(sequences, columns=["tconst_id", "parentTconst_id"])
-    logger.info("生成剧集-系列序列数：%d", len(seq_df))
-    return seq_df
+    # 转换为整数 ID
+    int_sequences = []
+    for seq in tqdm(sequences, desc="转换序列为整数"):
+        int_seq = [vocab.get(token, 1) for token in seq]  # 1 = <UNK>
+        # 截断或填充
+        if len(int_seq) > max_seq_len:
+            int_seq = int_seq[:max_seq_len]
+        else:
+            int_seq = int_seq + [0] * (max_seq_len - len(int_seq))
+        int_sequences.append(int_seq)
+    
+    # 保存为 CSV
+    columns = [f"token_{i}" for i in range(max_seq_len)]
+    df = pd.DataFrame(int_sequences, columns=columns)
+    df.to_csv(output_path, index=False)
+    logger.info("序列数据已保存: %s (%d 行)", output_path, len(df))
 
 
-def _pad_and_align_sequences(seq_df: pd.DataFrame, target_columns: pd.Index) -> pd.DataFrame:
-    """将序列 DataFrame 填充并对齐到目标列结构。"""
-    if seq_df.empty:
-        return pd.DataFrame()
-
-    n_target_cols = len(target_columns)
-    padded_df = seq_df.copy()
-
-    # 填充到目标列数
-    for i in range(seq_df.shape[1], n_target_cols):
-        padded_df[f"pad_{i}"] = 0
-
-    # 重命名列以匹配目标
-    padded_df.columns = target_columns[:len(padded_df.columns)].tolist() + list(padded_df.columns[len(target_columns):])
-
-    # 确保所有目标列都存在
-    for col in target_columns:
-        if col not in padded_df.columns:
-            padded_df[col] = 0
-
-    # 按目标列顺序排列
-    padded_df = padded_df[target_columns]
-    return padded_df
-
-
-def _apply_entity_prefixes(
-    movies_info_df: pd.DataFrame,
-    staff_df: pd.DataFrame,
-    regional_titles_df: pd.DataFrame,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """为所有实体列添加类型前缀，增强语义区分度。"""
-    logger.info("正在添加实体类型前缀...")
-
-    # ========== 电影信息表 ==========
-    movies = movies_info_df.copy()
-    # 电影 ID
-    movies = _add_prefix_to_column(movies, "tconst", "movie")
-    # 类型
-    for col in ["genres1", "genres2", "genres3"]:
-        if col in movies.columns:
-            movies = _add_prefix_to_column(movies, col, "genre")
-    # 主要演职类别
-    for col in ["principalCat1", "principalCat2", "principalCat3"]:
-        if col in movies.columns:
-            movies = _add_prefix_to_column(movies, col, "category")
-    # 父系列
-    if "parentTconst" in movies.columns:
-        movies = _add_prefix_to_column(movies, "parentTconst", "series")
-
-    # ========== 人员信息表 ==========
-    staff = staff_df.copy()
-    # 人员 ID
-    staff = _add_prefix_to_column(staff, "nconst", "person")
-    # 职业
-    for col in ["primaryProfession_top1", "primaryProfession_top2", "primaryProfession_top3"]:
-        if col in staff.columns:
-            staff = _add_prefix_to_column(staff, col, "profession")
-    # 代表作（电影 ID）
-    for col in ["knownForTitle1", "knownForTitle2", "knownForTitle3", "knownForTitle4"]:
-        if col in staff.columns:
-            staff = _add_prefix_to_column(staff, col, "movie")
-
-    # ========== 区域别名表 ==========
-    regional = regional_titles_df.copy()
-    regional = _add_prefix_to_column(regional, "tconst", "movie")
-    if "region" in regional.columns:
-        regional = _add_prefix_to_column(regional, "region", "region")
-
-    logger.info("实体类型前缀添加完成")
-    return movies, staff, regional
-
+# ========== 主入口 ==========
 
 def run_feature_engineering(
     movies_info_df: pd.DataFrame,
     staff_df: pd.DataFrame,
     regional_titles_df: pd.DataFrame,
 ) -> Tuple[Path, Path]:
-    """执行特征工程全流程：实体前缀、独热、融合、词表与向量化。"""
-
-    # ========== 0. 添加实体类型前缀 ==========
-    movies_info_prefixed, staff_prefixed, regional_prefixed = _apply_entity_prefixes(
-        movies_info_df, staff_df, regional_titles_df
+    """
+    执行特征工程：生成适合 Word2Vec 的序列数据。
+    
+    Returns:
+        (sequences_path, vocab_path)
+    """
+    logger.info("========== 开始特征工程（序列模式）==========")
+    
+    # 加载辅助数据
+    cache_dir = CONFIG.paths.cache_dir
+    
+    title_principals_df = None
+    principals_path = cache_dir / "title_principals_df.csv"
+    if principals_path.exists():
+        title_principals_df = pd.read_csv(principals_path)
+        logger.info("加载 principals 数据: %d 行", len(title_principals_df))
+    
+    title_episode_df = None
+    episode_path = cache_dir / "title_episode_df.csv"
+    if episode_path.exists():
+        title_episode_df = pd.read_csv(episode_path)
+        logger.info("加载 episode 数据: %d 行", len(title_episode_df))
+    
+    title_crew_df = None
+    crew_path = cache_dir / "title_crew_tsv_df.csv"
+    if crew_path.exists():
+        title_crew_df = pd.read_csv(crew_path)
+        logger.info("加载 crew 数据: %d 行", len(title_crew_df))
+    
+    # ========== 生成各类序列 ==========
+    all_sequences = []
+    
+    # 1. 人员-电影序列（最重要！）
+    person_movie_seqs = _generate_person_movie_sequences(
+        staff_df, title_crew_df, title_principals_df
     )
-
-    movies_info_regional = merge_regional_features(movies_info_prefixed, regional_prefixed)
-    merged_df = merge_staff_movies(movies_info_regional, staff_prefixed)
-
-    vocab = build_vocab(movies_info_regional, staff_prefixed, regional_prefixed)
-    mapped_df = vectorize_dataframe(merged_df.copy(), vocab)
-
-    base_row_count = len(mapped_df)
-    logger.info("基础训练数据行数：%d", base_row_count)
-
-    # ========== 1. 生成演员-电影共现序列并追加 ==========
-    principals_path = CONFIG.paths.cache_dir / "title_principals_df.csv"
-    principals_seq_df = _build_principals_sequences(principals_path, vocab)
-
-    if not principals_seq_df.empty:
-        principals_padded = _pad_and_align_sequences(principals_seq_df, mapped_df.columns)
-        mapped_df = pd.concat([mapped_df, principals_padded], ignore_index=True)
-        logger.info("追加演员-电影序列后总行数：%d (+%d)", len(mapped_df), len(principals_padded))
-
-    # ========== 2. 生成剧集-系列共现序列并追加 ==========
-    episode_path = CONFIG.paths.cache_dir / "title_episode_df.csv"
-    episode_seq_df = _build_episode_sequences(episode_path, vocab)
-
-    if not episode_seq_df.empty:
-        episode_padded = _pad_and_align_sequences(episode_seq_df, mapped_df.columns)
-        mapped_df = pd.concat([mapped_df, episode_padded], ignore_index=True)
-        logger.info("追加剧集-系列序列后总行数：%d (+%d)", len(mapped_df), len(episode_padded))
-
-    # ========== 汇总统计 ==========
-    total_added = len(mapped_df) - base_row_count
-    logger.info(
-        "特征工程完成：基础数据 %d 行 + 关系序列 %d 行 = 总计 %d 行",
-        base_row_count, total_added, len(mapped_df)
+    all_sequences.extend(person_movie_seqs)
+    
+    # 2. 电影-上下文序列（电影的类型、评分、导演、演员）
+    movie_context_seqs = _generate_movie_context_sequences(
+        movies_info_df, title_principals_df, title_crew_df
     )
-
-    final_mapped_path = CONFIG.paths.final_mapped_path
-    mapped_df.to_csv(final_mapped_path, index=False)
-    logger.info("向量化表已保存：%s", final_mapped_path)
-
-    return final_mapped_path, CONFIG.paths.vocab_path
-
-
+    all_sequences.extend(movie_context_seqs)
+    
+    # 3. 系列-剧集序列
+    series_episode_seqs = _generate_series_episode_sequences(title_episode_df)
+    all_sequences.extend(series_episode_seqs)
+    
+    # 4. 合作演员序列
+    coactor_seqs = _generate_coactor_sequences(title_principals_df)
+    all_sequences.extend(coactor_seqs)
+    
+    # 5. 类型-电影序列
+    genre_movie_seqs = _generate_genre_movie_sequences(movies_info_df)
+    all_sequences.extend(genre_movie_seqs)
+    
+    logger.info("========== 序列统计 ==========")
+    logger.info("人员-电影序列: %d", len(person_movie_seqs))
+    logger.info("电影-上下文序列: %d", len(movie_context_seqs))
+    logger.info("系列-剧集序列: %d", len(series_episode_seqs))
+    logger.info("合作演员序列: %d", len(coactor_seqs))
+    logger.info("类型-电影序列: %d", len(genre_movie_seqs))
+    logger.info("总序列数: %d", len(all_sequences))
+    
+    # 打乱序列顺序
+    random.shuffle(all_sequences)
+    
+    # ========== 构建词汇表 ==========
+    vocab = build_vocab_from_sequences(all_sequences)
+    
+    # 保存词汇表
+    vocab_path = CONFIG.paths.vocab_path
+    vocab_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.Series(vocab).to_csv(vocab_path, header=False)
+    logger.info("词汇表已保存: %s", vocab_path)
+    
+    # ========== 保存序列数据 ==========
+    sequences_path = CONFIG.paths.final_mapped_path
+    save_sequences_to_csv(all_sequences, vocab, sequences_path, max_seq_len=50)
+    
+    logger.info("========== 特征工程完成 ==========")
+    return sequences_path, vocab_path
