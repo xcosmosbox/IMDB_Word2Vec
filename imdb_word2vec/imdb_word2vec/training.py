@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras import layers, mixed_precision
+from tensorflow.keras.callbacks import ReduceLROnPlateau
 from tqdm import tqdm
 
 from .config import CONFIG
@@ -193,14 +194,22 @@ def _load_vocab_tokens(vocab_path: Path, vocab_size: int, kept_old_ids: Optional
 
 
 def train_word2vec(
-    fused_features_path: Path,
+    mapped_features_path: Path,
     vocab_path: Path,
     vocab_limit: int,
     max_sequences: Optional[int] = None,
 ) -> Tuple[Path, Path]:
-    """使用融合特征训练 Word2Vec，返回向量与元数据路径。"""
-    fused_df = pd.read_parquet(fused_features_path)
-    data = fused_df.values.astype(np.int64)
+    """使用向量化特征训练 Word2Vec，返回向量与元数据路径。
+
+    Args:
+        mapped_features_path: 向量化后的 CSV 路径（如 final_mapped_vec.csv）。
+        vocab_path: 词表 CSV 路径。
+        vocab_limit: 词表规模上限。
+        max_sequences: 可选的序列数上限，用于小样本验证。
+    """
+    logger.info("读取特征文件: %s", mapped_features_path)
+    mapped_df = pd.read_csv(mapped_features_path)
+    data = mapped_df.values.astype(np.int64)
 
     # 仅截取 max_sequences（若指定）
     if max_sequences is not None:
@@ -245,10 +254,20 @@ def train_word2vec(
 
     # 压缩后的词表规模
     vocab_size = len(freq_new)
+    logger.info("压缩后词表规模: %d", vocab_size)
+
+    # 估算每个 epoch 的样本数（用于 steps_per_epoch）
+    # 每个序列中，每个有效 token 大约产生 2*window_size 个 skip-gram 样本
+    n_rows = data.shape[0]
+    avg_valid_tokens_per_row = valid_tokens.size / n_rows if n_rows > 0 else 0
+    window_size = CONFIG.train.window_size
+    estimated_samples = int(n_rows * avg_valid_tokens_per_row * 2 * window_size * 0.5)  # 保守估计
+    batch_size = CONFIG.train.batch_size_word2vec
+    steps_per_epoch = max(1, estimated_samples // batch_size)
+    logger.info("估算样本数: %d, steps_per_epoch: %d", estimated_samples, steps_per_epoch)
 
     # 构造流式 Dataset，分块生成 skip-gram 样本，降低内存占用
     seq_chunk_size = CONFIG.train.seq_chunk_size
-    window_size = CONFIG.train.window_size
     num_negative = CONFIG.train.num_negative_samples
 
     def generator():
@@ -275,13 +294,14 @@ def train_word2vec(
     dataset = tf.data.Dataset.from_generator(generator, output_signature=output_signature)
     dataset = dataset.shuffle(10_000)
     dataset = dataset.batch(CONFIG.train.batch_size_word2vec, drop_remainder=True)
+    dataset = dataset.repeat()  # 允许多轮 epoch 迭代，避免数据耗尽
     dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
     # 分布式与混合精度策略
     strategy = _get_strategy()
     logger.info("分布式策略: %s, 设备数: %d", strategy.__class__.__name__, strategy.num_replicas_in_sync)
 
-    epochs = 25
+    epochs = 30
     accum_steps = max(1, CONFIG.train.accum_steps_word2vec)
     with strategy.scope():
         model = Word2Vec(vocab_size=vocab_size, embedding_dim=CONFIG.train.embedding_dim)
@@ -295,11 +315,19 @@ def train_word2vec(
 
     if accum_steps > 1:
         logger.info("开启梯度累积模式: accum_steps=%d", accum_steps)
+        dataset_iter = iter(dataset)
         for epoch in range(epochs):
-            pbar = tqdm(dataset, desc=f"Word2Vec 累积训练 Epoch {epoch+1}/{epochs}", unit="step")
+            pbar = tqdm(range(steps_per_epoch), desc=f"Word2Vec 累积训练 Epoch {epoch+1}/{epochs}", unit="step")
             accum_grads = None
             step_in_epoch = 0
-            for (targets, contexts), labels in pbar:
+            for _ in pbar:
+                try:
+                    (targets, contexts), labels = next(dataset_iter)
+                except StopIteration:
+                    # 数据耗尽时重新创建迭代器（配合 .repeat() 使用时不会触发）
+                    dataset_iter = iter(dataset)
+                    (targets, contexts), labels = next(dataset_iter)
+
                 with tf.GradientTape() as tape:
                     logits = model((targets, contexts), training=True)
                     loss = loss_fn(tf.cast(labels, tf.float32), logits) / accum_steps
@@ -338,8 +366,22 @@ def train_word2vec(
                 loss=loss_fn,
                 metrics=["accuracy"],
             )
+        # 学习率调度：当 loss 停滞时自动降低学习率
+        lr_callback = ReduceLROnPlateau(
+            monitor="loss",
+            factor=0.5,       # 每次降低为原来的一半
+            patience=3,       # 连续 3 个 epoch 无改善则触发
+            min_lr=1e-6,      # 最低学习率
+            verbose=1,
+        )
         tqdm_callback = TqdmProgressCallback(epochs=epochs, desc="Word2Vec 训练")
-        model.fit(dataset, epochs=epochs, verbose=0, callbacks=[tqdm_callback])
+        model.fit(
+            dataset,
+            epochs=epochs,
+            steps_per_epoch=steps_per_epoch,  # 指定每个 epoch 的步数，配合 .repeat() 使用
+            verbose=0,
+            callbacks=[tqdm_callback, lr_callback],
+        )
 
     tokens = _load_vocab_tokens(vocab_path, vocab_size, kept_old_ids=keep_ids)
     vectors_path = CONFIG.paths.vectors_path

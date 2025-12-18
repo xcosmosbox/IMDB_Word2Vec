@@ -103,7 +103,8 @@ class PathConfig:
 class DataConfig:
     """数据下载与采样配置。"""
 
-    subset_rows: Optional[int] = 100_000  # None 表示全量
+    # subset_rows: Optional[int] = 100_000  # None 表示全量
+    subset_rows: Optional[int] = None  # None 表示全量
     enable_tqdm: bool = True  # 数据相关步骤是否开启 tqdm 进度展示
     tsv_urls: Dict[str, str] = field(
         default_factory=lambda: {
@@ -128,13 +129,13 @@ class TrainConfig:
     enable_mixed_precision: bool = True  # GPU/Metal 环境启用混合精度以节省显存
 
     # 词表与采样相关配置
-    min_freq: int = 5  # 低频裁剪阈值，低于该频次的 token 将被丢弃
-    subsample_t: float = 1e-5  # 高频子采样阈值，越小丢弃高频 token 越多
-    vocab_limit: int = 20_000  # 用于 Word2Vec 的词表上限
+    min_freq: int = 3  # 低频裁剪阈值，低于该频次的 token 将被丢弃
+    subsample_t: float = 1e-4  # 高频子采样阈值，越小丢弃高频 token 越多
+    vocab_limit: int = 50_000  # 用于 Word2Vec 的词表上限
 
     # 负采样与窗口
-    window_size: int = 2
-    num_negative_samples: int = 8  # 适度降低负样本，平衡速度与质量
+    window_size: int = 5
+    num_negative_samples: int = 12  # 适度降低负样本，平衡速度与质量
 
     # 数据规模与分块
     max_sequences: Optional[int] = None  # 训练语料行数上限
@@ -148,7 +149,7 @@ class TrainConfig:
     epochs_autoencoder: int = 200
     autoencoder_val_split: float = 0.2
     batch_size_word2vec: int = 1024
-    embedding_dim: int = 150
+    embedding_dim: int = 256
 
     @property
     def device_string(self) -> str:

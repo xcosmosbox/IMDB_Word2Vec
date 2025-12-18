@@ -8,7 +8,7 @@ import pandas as pd
 import tensorflow as tf
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from tensorflow.keras import Model
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from tensorflow.keras.layers import Dense, Dropout, Input, LayerNormalization
 from tqdm import tqdm
 
@@ -116,10 +116,18 @@ def train_autoencoder(
 
     # 使用 tqdm 回调显示训练进度
     tqdm_callback = TqdmProgressCallback(epochs=epochs, desc="Autoencoder 训练")
+    # 学习率调度：当 val_loss 停滞时自动降低学习率
+    lr_callback = ReduceLROnPlateau(
+        monitor="val_loss",
+        factor=0.5,       # 每次降低为原来的一半
+        patience=5,       # 连续 5 个 epoch 无改善则触发
+        min_lr=1e-7,      # 最低学习率
+        verbose=1,
+    )
     callbacks = [
         EarlyStopping(
             monitor="val_loss",
-            patience=10,
+            patience=15,  # 增加耐心，配合学习率衰减
             restore_best_weights=True,
         ),
         ModelCheckpoint(
@@ -129,6 +137,7 @@ def train_autoencoder(
             mode="min",
             verbose=0,  # 关闭 ModelCheckpoint 的输出，使用 tqdm
         ),
+        lr_callback,
         tqdm_callback,
     ]
 
