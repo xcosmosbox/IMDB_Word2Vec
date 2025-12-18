@@ -6,10 +6,10 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from tensorflow.keras import Model
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-from tensorflow.keras.layers import Dense, Dropout, Input
+from tensorflow.keras.layers import Dense, Dropout, Input, LayerNormalization
 from tqdm import tqdm
 
 from .config import CONFIG
@@ -73,7 +73,8 @@ def train_autoencoder(
     if data.ndim == 1:
         data = data.reshape(-1, 1)
 
-    scaler = StandardScaler()
+    # scaler = StandardScaler()
+    scaler = MinMaxScaler(feature_range=(-1,1))
     data_std = scaler.fit_transform(data)
 
     # 分布式策略与混合精度由 config.setup 设置
@@ -82,13 +83,28 @@ def train_autoencoder(
 
     with strategy.scope():
         input_layer = Input(shape=(data_std.shape[1],))
-        x = Dense(512, activation="relu")(input_layer)
+
+        x = Dense(192, activation="gelu")(input_layer)
+        x = LayerNormalization()(x)
         x = Dropout(0.1)(x)
-        x = Dense(256, activation="relu")(x)
+
+        x = Dense(128, activation="gelu")(x)
+        x = LayerNormalization()(x)
         x = Dropout(0.1)(x)
-        x = Dense(128, activation="relu")(x)
+
+        x = Dense(64, activation="gelu")(x)  # 瓶颈
+        x = LayerNormalization()(x)
         x = Dropout(0.1)(x)
-        output_layer = Dense(data_std.shape[1], activation=None)(x)
+
+        x = Dense(128, activation="gelu")(x)
+        x = LayerNormalization()(x)
+        x = Dropout(0.1)(x)
+
+        x = Dense(192, activation="gelu")(x)
+        x = LayerNormalization()(x)
+        x = Dropout(0.11)(x)
+
+        output_layer = Dense(data_std.shape[1], activation="tanh")(x)
 
         model: Model = Model(inputs=input_layer, outputs=output_layer)
         opt = tf.keras.optimizers.Adam(learning_rate=1e-4)

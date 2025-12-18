@@ -144,8 +144,8 @@ class TrainConfig:
     accum_steps_word2vec: int = 1  # >1 时开启梯度累积
     accum_steps_autoencoder: int = 1
 
-    batch_size_autoencoder: int = 2048
-    epochs_autoencoder: int = 50
+    batch_size_autoencoder: int = 1024
+    epochs_autoencoder: int = 200
     autoencoder_val_split: float = 0.2
     batch_size_word2vec: int = 1024
     embedding_dim: int = 150
@@ -184,7 +184,7 @@ class Config:
         if self.train.enable_mixed_precision and self.train.use_gpu:
             try:
                 from tensorflow.keras import mixed_precision
-                mixed_precision.set_global_policy("mixed_float16")
+                mixed_precision.set_global_policy("mixed_float32")
             except Exception:
                 pass
 
