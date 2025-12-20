@@ -35,12 +35,33 @@ class TqdmProgressCallback(tf.keras.callbacks.Callback):
         logs = logs or {}
         loss = logs.get("loss", 0)
         acc = logs.get("accuracy", 0)
-        self.pbar.set_postfix({"loss": f"{loss:.4f}", "acc": f"{acc:.4f}"})
+        pos_recall = logs.get("positive_recall", 0)
+        self.pbar.set_postfix({
+            "loss": f"{loss:.4f}",
+            "acc": f"{acc:.4f}",
+            "pos_recall": f"{pos_recall:.4f}"
+        })
         self.pbar.update(1)
 
     def on_train_end(self, logs=None):
         if self.pbar:
             self.pbar.close()
+
+
+def positive_recall(y_true, y_pred):
+    """
+    正样本召回率：模型对正样本（第一个位置）的预测准确率。
+    
+    y_true: [batch, num_ns+1]，第一个位置是 1（正样本），其余是 0
+    y_pred: [batch, num_ns+1]，logits
+    
+    正样本召回 = 正样本位置的 logit 是所有位置中最大的比例
+    """
+    # 获取预测中最大值的索引
+    pred_max_idx = tf.argmax(y_pred, axis=-1)  # [batch]
+    # 正样本在第 0 位
+    correct = tf.cast(tf.equal(pred_max_idx, 0), tf.float32)
+    return tf.reduce_mean(correct)
 
 
 # ========== 辅助函数 ==========
@@ -340,7 +361,7 @@ def train_word2vec(
     strategy = _get_strategy()
     logger.info("分布式策略: %s", strategy.__class__.__name__)
     
-    epochs = 30
+    epochs = 10
     
     with strategy.scope():
         model = Word2Vec(vocab_size=vocab_size, embedding_dim=CONFIG.train.embedding_dim)
@@ -350,7 +371,11 @@ def train_word2vec(
         if mixed_precision.global_policy().compute_dtype == "float16":
             optimizer = mixed_precision.LossScaleOptimizer(optimizer)
         
-        model.compile(optimizer=optimizer, loss=loss_fn, metrics=["accuracy"])
+        model.compile(
+            optimizer=optimizer,
+            loss=loss_fn,
+            metrics=["accuracy", positive_recall]
+        )
     
     # 回调
     lr_callback = ReduceLROnPlateau(

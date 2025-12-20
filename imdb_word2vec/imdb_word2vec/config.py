@@ -141,7 +141,7 @@ class TrainConfig:
 
     # 负采样与窗口
     window_size: int = 5
-    num_negative_samples: int = 12  # 适度降低负样本，平衡速度与质量
+    num_negative_samples: int = 20  # 适度降低负样本，平衡速度与质量
 
     # 数据规模与分块
     max_sequences: Optional[int] = None  # 训练语料行数上限
@@ -162,10 +162,10 @@ class TrainConfig:
     accum_steps_autoencoder: int = 1
 
     batch_size_autoencoder: int = 1024
-    epochs_autoencoder: int = 50
+    epochs_autoencoder: int = 10
     autoencoder_val_split: float = 0.2
     batch_size_word2vec: int = 1024
-    embedding_dim: int = 256
+    embedding_dim: int = 128
 
     @property
     def device_string(self) -> str:
