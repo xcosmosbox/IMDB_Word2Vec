@@ -1,3 +1,4 @@
+imdb_venv/*
 imdb_venv/pyvenv.cfg
 imdb_venv/bin/activate
 imdb_venv/bin/activate.csh

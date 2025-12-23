@@ -156,6 +156,11 @@ class TrainConfig:
     # 并行样本生成配置
     parallel_workers: Optional[int] = None  # 并行生成样本的进程数，None 表示自动检测（CPU核心数-1）
     parallel_chunk_size: int = 10000  # 每个进程处理的序列数
+    
+    # 内存控制与流式训练
+    max_memory_gb: float = 3.0  # 每个数据块的最大内存占用（GB）
+    global_epochs: int = 5  # 遍历全部数据的轮数
+    epochs_per_chunk: int = 2  # 每个数据块训练的 epoch 数
 
     # 梯度累积（显存紧张时可开启）
     accum_steps_word2vec: int = 1  # >1 时开启梯度累积
