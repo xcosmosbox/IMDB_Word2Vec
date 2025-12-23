@@ -141,7 +141,7 @@ class TrainConfig:
 
     # 负采样与窗口
     window_size: int = 5
-    num_negative_samples: int = 20  # 适度降低负样本，平衡速度与质量
+    num_negative_samples: int = 5  # 减少到 5 个，节省空间和时间，质量影响很小
 
     # 数据规模与分块
     max_sequences: Optional[int] = None  # 训练语料行数上限
