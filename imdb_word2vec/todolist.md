@@ -1,3 +1,405 @@
+[3 tools called]
+
+---
+
+# 🔍 技术评审报告
+
+**评审人**: AI 技术官 (CTO)  
+**项目**: IMDb Word2Vec 电影推荐系统  
+**评审日期**: 2024-12-23
+
+---
+
+## 📊 总体评分
+
+| 维度 | 评分 | 说明 |
+|------|------|------|
+| **架构设计** | ⭐⭐⭐☆☆ (3/5) | 模块化尚可，但职责边界模糊 |
+| **代码质量** | ⭐⭐⭐⭐☆ (4/5) | 可读性好，但存在冗余 |
+| **工程实践** | ⭐⭐⭐☆☆ (3/5) | 有配置管理，缺乏测试覆盖 |
+| **算法选择** | ⭐⭐⭐☆☆ (3/5) | Word2Vec 过时，但实现合理 |
+| **可扩展性** | ⭐⭐⭐⭐☆ (4/5) | 流式训练设计良好 |
+
+**综合评分**: **3.4/5** — 中等偏上的学习项目，距离生产级别还有差距
+
+---
+
+## 🎯 目标分析
+
+### 声称目标
+> 电影推荐系统
+
+### 实际实现
+> 一个 Word2Vec 嵌入训练管道
+
+### ⚠️ 目标与实现的鸿沟
+
+```
+声称: "电影推荐系统"
+实际: 只有嵌入层，没有推荐逻辑
+
+缺失组件:
+├── ❌ 用户画像模块
+├── ❌ 召回层 (Candidate Generation)
+├── ❌ 精排层 (Ranking)
+├── ❌ 在线服务 API
+└── ❌ A/B 测试框架
+```
+
+**毒辣点评**: 这不是推荐系统，这是推荐系统的 **0.1 个组件**。把词向量训练等同于推荐系统，就像把发动机等同于汽车。
+
+---
+
+## 🏗️ 架构评审
+
+### ✅ 优点
+
+1. **模块化分离清晰**
+```
+preprocess.py     → 数据清洗
+feature_engineering.py → 特征构建
+pretraining.py    → 样本生成
+training.py       → 模型训练
+export.py         → 模型导出
+```
+
+2. **配置集中管理**
+```python
+# config.py - 良好实践
+@dataclass
+class Config:
+    paths: PathConfig
+    data: DataConfig
+    train: TrainConfig
+```
+
+3. **流式训练设计**
+```python
+# 解决内存瓶颈的正确思路
+for chunk in chunks:
+    train_on_chunk(chunk)
+    release_memory()
+```
+
+### ❌ 问题
+
+#### 1. 职责混乱
+
+```python
+# feature_engineering.py 中混杂了：
+# - 序列生成 (Word2Vec 用)
+# - 表格特征生成 (Autoencoder 用)
+# - 词表构建
+# 应该拆分为 3 个模块
+```
+
+#### 2. Autoencoder 模块定位尴尬
+
+```python
+# autoencoder.py 的问题：
+# 1. 输入是 tabular_features，输出也是 tabular_features
+# 2. 与 Word2Vec 完全独立，没有联合训练
+# 3. 生成的 fused_features 没有下游消费者
+
+# 这个模块存在的意义是什么？
+```
+
+**毒辣点评**: Autoencoder 像是一个孤儿，被生下来就没人管。
+
+#### 3. 实体前缀设计过度
+
+```python
+ENTITY_PREFIXES = {
+    "movie": "MOV_",
+    "person": "PER_",
+    "actor": "ACT_",    # 演员
+    "director": "DIR_", # 导演
+    # ...
+}
+
+# 问题：同一个人既是 PER_nm123，又是 ACT_nm123，又是 DIR_nm123
+# 这不是区分，是混乱
+```
+
+---
+
+## 💻 代码质量评审
+
+### ✅ 优点
+
+1. **类型注解完整**
+```python
+def _add_negative_samples(
+    targets: np.ndarray,
+    contexts: np.ndarray,
+    neg_prob: np.ndarray,
+    num_ns: int,
+    rng: np.random.Generator,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+```
+
+2. **日志规范**
+```python
+logger.info("词表规模: %d", vocab_size)
+logger.info("数据块数: %d", num_chunks)
+```
+
+### ❌ 问题
+
+#### 1. 重复代码
+
+```python
+# training.py 中 TqdmProgressCallback 定义了一次
+# autoencoder.py 中 TqdmProgressCallback 又定义了一次
+# 应该放到 utils.py
+```
+
+#### 2. 魔法数字
+
+```python
+# config.py
+subsample_t: float = 1e-4  # 为什么是 1e-4？
+window_size: int = 5       # 为什么是 5？
+num_negative_samples: int = 5  # 为什么是 5？
+
+# 没有任何文档说明这些值的来源
+```
+
+#### 3. 异常处理缺失
+
+```python
+# pretraining.py
+data = np.load(chunk_path)
+return data["targets"], data["contexts"]
+
+# 如果文件损坏呢？如果 key 不存在呢？
+# 生产代码必须处理这些情况
+```
+
+#### 4. feature_engineering.py 中大量低效循环
+
+```python
+# 793 行代码，大量 iterrows()
+for _, row in tqdm(staff_df.iterrows(), ...):
+    # iterrows 是 pandas 最慢的遍历方式
+    # 应该用 vectorized 操作或 apply
+```
+
+**毒辣点评**: `iterrows` 是 pandas 的耻辱柱，你用了 10 次。
+
+---
+
+## 🧮 算法评审
+
+### Word2Vec 的时代局限
+
+```
+2013: Word2Vec 发布
+2018: BERT 发布
+2020: GPT-3 发布
+2024: 你还在用 Word2Vec
+
+问题：
+1. 无法处理多义词（"苹果"是水果还是公司？）
+2. 无法捕获句子级语义
+3. 无法处理 OOV（Out-of-Vocabulary）
+```
+
+### 更好的选择
+
+| 方案 | 优势 | 适用场景 |
+|------|------|----------|
+| **GloVe** | 全局统计 + 共现 | 静态嵌入 |
+| **FastText** | 支持子词，处理 OOV | 形态丰富的语言 |
+| **Sentence-BERT** | 句子级语义 | 文本相似度 |
+| **Two-Tower** | 专为推荐设计 | 工业级推荐 |
+
+**毒辣点评**: 2024 年还在手写 Word2Vec，就像 2024 年还在用翻盖手机。能用，但为什么？
+
+---
+
+## 🔬 特征工程评审
+
+### ✅ 亮点
+
+```python
+# 9 种序列类型，覆盖多种关系
+1. 人员-电影序列
+2. 电影-上下文序列
+3. 系列-剧集序列
+4. 合作演员序列
+5. 类型-电影序列
+6. 年代-电影序列    ← 创新
+7. 评分-电影序列    ← 创新
+8. 导演-类型偏好    ← 创新
+9. 演员-类型偏好    ← 创新
+```
+
+### ❌ 问题
+
+#### 1. 评分分桶过于粗糙
+
+```python
+def _rating_to_bucket(rating: float) -> str:
+    bucket = round(rating * 2) / 2  # 0.5 分一档
+    return f"{bucket:.1f}"
+
+# 问题：7.0 和 7.4 被归为同一档
+# 但 7.4 和 7.5 被归为不同档
+# 这种离散化会丢失信息
+```
+
+#### 2. 序列长度不一致
+
+```python
+# 有的人有 100 部作品，有的只有 1 部
+# 全部截断/填充到 100
+# 填充用 0，但 0 在训练时被过滤
+# 那些只有 1 部作品的人，有效序列长度只有 1
+# 这种序列对 Word2Vec 毫无意义
+```
+
+---
+
+## 📁 工程实践评审
+
+### ✅ 优点
+
+1. 有 `requirements.txt`
+2. 有 CLI 入口
+3. 有配置文件分离
+
+### ❌ 严重问题
+
+#### 1. 测试覆盖为零
+
+```
+tests/
+├── test_imports.py  # 只测试 import
+└── test_paths.py    # 只测试路径
+
+# 核心逻辑 0 测试
+# preprocess? 没测试
+# feature_engineering? 没测试
+# training? 没测试
+```
+
+**毒辣点评**: 没有测试的代码就是定时炸弹。
+
+#### 2. 没有 CI/CD
+
+```
+缺失：
+├── ❌ GitHub Actions
+├── ❌ pre-commit hooks
+├── ❌ 代码格式检查 (black/ruff)
+└── ❌ 类型检查 (mypy)
+```
+
+#### 3. 文档缺失
+
+```
+README.md: 只有 56 行，基本是占位符
+API 文档: 无
+架构图: 无
+数据流图: 无
+```
+
+---
+
+## 📈 性能评审
+
+### ✅ 优点
+
+1. **流式训练节省内存**
+```python
+# 从 337 GB 降到 20 GB
+# 这是正确的优化方向
+```
+
+2. **并行样本生成**
+```python
+with mp.Pool(n_workers) as pool:
+    results = pool.imap_unordered(...)
+```
+
+### ❌ 问题
+
+#### 1. GPU 利用率低
+
+```python
+# 大量时间花在 CPU 上：
+# - pandas 处理
+# - 样本生成
+# - 负采样
+
+# GPU 只在 model.fit() 时工作
+# 典型的 CPU 瓶颈
+```
+
+#### 2. I/O 瓶颈
+
+```python
+# 每个 epoch 重新从磁盘加载 chunk
+# 应该用 tf.data.TFRecordDataset 或 prefetch
+```
+
+---
+
+## 🎯 改进建议
+
+### 优先级 P0（必须做）
+
+1. **定义清晰的项目目标**
+   - 如果是"推荐系统"：补全召回层、精排层
+   - 如果是"嵌入训练"：改名，不要误导
+
+2. **添加单元测试**
+   ```bash
+   pytest tests/ --cov=imdb_word2vec --cov-report=html
+   # 目标覆盖率 > 70%
+   ```
+
+3. **删除或整合 Autoencoder**
+   - 要么与 Word2Vec 联合训练
+   - 要么删除这个孤儿模块
+
+### 优先级 P1（应该做）
+
+4. **优化 feature_engineering.py**
+   ```python
+   # 替换 iterrows
+   df.groupby("nconst").apply(lambda x: ...)
+   ```
+
+5. **升级嵌入方案**
+   - 考虑 GloVe 或 FastText
+   - 或直接用预训练的 Sentence-BERT
+
+6. **添加评估指标**
+   - 目前只有 loss 和 accuracy
+   - 推荐系统需要：Recall@K, NDCG, MAP
+
+### 优先级 P2（可以做）
+
+7. 添加 CI/CD
+8. 添加 API 文档
+9. 添加架构图
+
+---
+
+## 📝 总结
+
+| 项目 | 评价 |
+|------|------|
+| **作为学习项目** | ⭐⭐⭐⭐☆ 不错的练手，理解了 Word2Vec 原理 |
+| **作为毕业设计** | ⭐⭐⭐☆☆ 勉强及格，缺乏创新和完整性 |
+| **作为生产系统** | ⭐☆☆☆☆ 完全不可用，缺失太多组件 |
+
+**一句话总结**: 
+
+> 你造了一个还不错的轮子，但轮子不是汽车。如果目标是电影推荐系统，你才完成了 10%。
+
 # 📋 IMDb Word2Vec 项目优缺点完整清单
 
 ---
