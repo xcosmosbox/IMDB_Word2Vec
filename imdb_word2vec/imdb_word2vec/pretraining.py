@@ -187,15 +187,22 @@ def generate_training_samples(
     
     # ========== 2. 计算词频和采样分布 ==========
     flat = sequences.reshape(-1)
-    flat = flat[flat > 1]
-    vocab_size = int(flat.max()) + 1
-    vocab_size = min(vocab_size, CONFIG.train.vocab_limit)
+    flat = flat[flat > 1]  # 过滤 PAD(0) 和 UNK(1)
     
-    freq = np.bincount(flat, minlength=vocab_size)
-    del flat
+    # 确定词表大小
+    actual_max = int(flat.max()) + 1
+    vocab_size = min(actual_max, CONFIG.train.vocab_limit)
+    
+    # 关键修复：先过滤超出词表的 token，再做 bincount
+    # 否则 bincount 会返回比 vocab_size 更大的数组
+    flat_filtered = flat[flat < vocab_size]
+    freq = np.bincount(flat_filtered, minlength=vocab_size)
+    
+    del flat, flat_filtered
     gc.collect()
     
-    logger.info("词表规模: %d", vocab_size)
+    logger.info("词表规模: %d (原始最大 ID: %d)", vocab_size, actual_max - 1)
+    logger.info("词频数组大小: %d (应与词表规模一致)", len(freq))
     
     subsample_probs = None
     if CONFIG.train.subsample_t > 0:

@@ -160,7 +160,7 @@ class TrainConfig:
     # 内存控制与流式训练
     max_memory_gb: float = 3.0  # 每个数据块的最大内存占用（GB）
     global_epochs: int = 5  # 遍历全部数据的轮数
-    epochs_per_chunk: int = 2  # 每个数据块训练的 epoch 数
+    epochs_per_chunk: int = 1  # 每个数据块训练的 epoch 数
 
     # 梯度累积（显存紧张时可开启）
     accum_steps_word2vec: int = 1  # >1 时开启梯度累积
@@ -169,7 +169,7 @@ class TrainConfig:
     batch_size_autoencoder: int = 1024
     epochs_autoencoder: int = 10
     autoencoder_val_split: float = 0.2
-    batch_size_word2vec: int = 1024
+    batch_size_word2vec: int = 8192
     embedding_dim: int = 128
 
     @property
