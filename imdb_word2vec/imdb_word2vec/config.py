@@ -148,19 +148,20 @@ class TrainConfig:
     seq_chunk_size: int = 100_000  # 分块生成 skip-gram 样本的序列块大小
 
     # 数据集缓存与 shuffle 配置
-    shuffle_buffer_size: int = 50_000  # shuffle 缓冲区大小，越大随机性越好但内存占用越多
+    shuffle_buffer_size: int = 20_000  # RTX 3090 Ti: 缩小以加快数据加载
     precache_samples: bool = True  # 是否预先生成所有样本到内存（加速训练，但需要更多内存）
     precache_max_samples: Optional[int] = 5_000_000  # 预缓存的最大样本数，None 表示全部缓存
     chunked_epoch_training: bool = True  # 内存不足时，每个 epoch 加载不同数据块（确保全量数据都被训练）
 
     # 并行样本生成配置
-    parallel_workers: Optional[int] = None  # 并行生成样本的进程数，None 表示自动检测（CPU核心数-1）
+    parallel_workers: Optional[int] = 12  # RTX 3090 Ti: 固定 8 个并行进程
     parallel_chunk_size: int = 10000  # 每个进程处理的序列数
     
     # 内存控制与流式训练
     max_memory_gb: float = 3.0  # 每个数据块的最大内存占用（GB）
     global_epochs: int = 5  # 遍历全部数据的轮数
-    epochs_per_chunk: int = 1  # 每个数据块训练的 epoch 数
+    epochs_per_chunk: int = 3  # 每个数据块训练的 epoch 数
+    enable_jit_compile: bool = True  # XLA JIT 编译加速（默认关闭，可选启用）
 
     # 梯度累积（显存紧张时可开启）
     accum_steps_word2vec: int = 1  # >1 时开启梯度累积
@@ -169,7 +170,7 @@ class TrainConfig:
     batch_size_autoencoder: int = 1024
     epochs_autoencoder: int = 10
     autoencoder_val_split: float = 0.2
-    batch_size_word2vec: int = 8192
+    batch_size_word2vec: int = 8192  # RTX 3090 Ti: 8x 提升
     embedding_dim: int = 128
 
     @property

@@ -646,55 +646,94 @@ def export_all(
     exported_files = {}
     
     # 1. TSV 格式（原有）
-    vectors_path = output_dir / "vectors.tsv"
-    metadata_path = output_dir / "metadata.tsv"
-    export_tsv(weights, tokens, vectors_path, metadata_path)
-    exported_files["vectors_tsv"] = vectors_path
-    exported_files["metadata_tsv"] = metadata_path
+    try:
+        vectors_path = output_dir / "vectors.tsv"
+        metadata_path = output_dir / "metadata.tsv"
+        export_tsv(weights, tokens, vectors_path, metadata_path)
+        exported_files["vectors_tsv"] = vectors_path
+        exported_files["metadata_tsv"] = metadata_path
+        logger.info("✓ TSV 导出成功")
+    except Exception as e:
+        logger.warning("✗ TSV 导出失败: %s", str(e))
     
     # 2. ONNX 格式（在线推理）
     onnx_path = output_dir / "word2vec.onnx"
-    export_onnx(len(tokens), weights.shape[1], weights, onnx_path)
-    if onnx_path.exists():
-        exported_files["onnx"] = onnx_path
+    try:
+        export_onnx(len(tokens), weights.shape[1], weights, onnx_path)
+        if onnx_path.exists():
+            exported_files["onnx"] = onnx_path
+            logger.info("✓ ONNX 导出成功")
+    except AttributeError as e:
+        logger.warning("✗ ONNX 导出失败（版本不兼容）: %s", str(e))
+        logger.info("  提示: 这是 ONNX 和 ml_dtypes 版本兼容性问题，不影响其他格式导出")
+    except Exception as e:
+        logger.warning("✗ ONNX 导出失败: %s", str(e))
+        logger.info("  已跳过 ONNX，继续导出其他格式")
     
     # 3. JSON 嵌入（网页可视化）
-    embeddings_json_path = output_dir / "embeddings.json"
-    export_json_embeddings(weights, tokens, embeddings_json_path)
-    exported_files["embeddings_json"] = embeddings_json_path
+    try:
+        embeddings_json_path = output_dir / "embeddings.json"
+        export_json_embeddings(weights, tokens, embeddings_json_path)
+        exported_files["embeddings_json"] = embeddings_json_path
+        logger.info("✓ JSON 嵌入导出成功")
+    except Exception as e:
+        logger.warning("✗ JSON 嵌入导出失败: %s", str(e))
     
     # 4. 聚类可视化 JSON
-    clustering_json_path = output_dir / "clustering.json"
-    export_clustering_visualization(weights, tokens, clustering_json_path)
-    exported_files["clustering_json"] = clustering_json_path
+    try:
+        clustering_json_path = output_dir / "clustering.json"
+        export_clustering_visualization(weights, tokens, clustering_json_path)
+        exported_files["clustering_json"] = clustering_json_path
+        logger.info("✓ 聚类可视化导出成功")
+    except Exception as e:
+        logger.warning("✗ 聚类可视化导出失败: %s", str(e))
     
     # 5. 推荐系统配置
-    recsys_dir = output_dir / "recsys"
-    export_recommendation_config(weights, tokens, recsys_dir)
-    exported_files["recsys_config"] = recsys_dir / "config.json"
+    try:
+        recsys_dir = output_dir / "recsys"
+        export_recommendation_config(weights, tokens, recsys_dir)
+        exported_files["recsys_config"] = recsys_dir / "config.json"
+        logger.info("✓ 推荐系统配置导出成功")
+    except Exception as e:
+        logger.warning("✗ 推荐系统配置导出失败: %s", str(e))
     
     # 6. HTML 可视化页面
-    html_path = output_dir / "visualization.html"
-    export_html_visualization(html_path, "clustering.json")
-    exported_files["visualization_html"] = html_path
+    try:
+        html_path = output_dir / "visualization.html"
+        export_html_visualization(html_path, "clustering.json")
+        exported_files["visualization_html"] = html_path
+        logger.info("✓ HTML 可视化导出成功")
+    except Exception as e:
+        logger.warning("✗ HTML 可视化导出失败: %s", str(e))
     
     # 7. 保存原始权重（NumPy 格式）
-    weights_path = output_dir / "embeddings.npy"
-    np.save(weights_path, weights)
-    exported_files["embeddings_npy"] = weights_path
+    try:
+        weights_path = output_dir / "embeddings.npy"
+        np.save(weights_path, weights)
+        exported_files["embeddings_npy"] = weights_path
+        logger.info("✓ NumPy 权重导出成功")
+    except Exception as e:
+        logger.warning("✗ NumPy 权重导出失败: %s", str(e))
     
     logger.info("========== 导出完成 ==========")
     logger.info("导出目录: %s", output_dir)
     
     # 打印文件清单
-    total_size = 0
-    for name, path in exported_files.items():
-        if path.exists():
-            size = path.stat().st_size / (1024**2)
-            total_size += size
-            logger.info("  - %s: %.2f MB", path.name, size)
-    
-    logger.info("总大小: %.2f MB", total_size)
+    if exported_files:
+        total_size = 0
+        logger.info("成功导出的文件:")
+        for name, path in exported_files.items():
+            try:
+                if path.exists():
+                    size = path.stat().st_size / (1024**2)
+                    total_size += size
+                    logger.info("  ✓ %s: %.2f MB", path.name, size)
+            except Exception as e:
+                logger.warning("  ⚠ %s: 无法读取文件大小 (%s)", path.name, str(e))
+        
+        logger.info("总大小: %.2f MB", total_size)
+    else:
+        logger.error("⚠ 所有导出均失败！请检查配置和数据")
     
     return exported_files
 

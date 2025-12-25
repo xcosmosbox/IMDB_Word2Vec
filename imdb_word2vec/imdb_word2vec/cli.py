@@ -1,18 +1,37 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
 
-from .config import CONFIG
-from .download import download_all
-from .feature_engineering import run_feature_engineering
-from .autoencoder import train_autoencoder
-from .logging_utils import setup_logging
-from .preprocess import preprocess_all
-from .training import train_word2vec
-from .pretraining import generate_training_samples
+# Support both relative and direct execution
+try:
+    from .config import CONFIG
+    from .download import download_all
+    from .feature_engineering import run_feature_engineering
+    from .autoencoder import train_autoencoder
+    from .logging_utils import setup_logging
+    from .preprocess import preprocess_all
+    from .training import train_word2vec
+    from .pretraining import generate_training_samples
+except ImportError:
+    # If relative import fails, adjust sys.path and use absolute imports
+    current_dir = Path(__file__).parent
+    parent_dir = current_dir.parent
+    
+    if str(parent_dir) not in sys.path:
+        sys.path.insert(0, str(parent_dir))
+    
+    from imdb_word2vec.config import CONFIG
+    from imdb_word2vec.download import download_all
+    from imdb_word2vec.feature_engineering import run_feature_engineering
+    from imdb_word2vec.autoencoder import train_autoencoder
+    from imdb_word2vec.logging_utils import setup_logging
+    from imdb_word2vec.preprocess import preprocess_all
+    from imdb_word2vec.training import train_word2vec
+    from imdb_word2vec.pretraining import generate_training_samples
 
 
 logger = setup_logging(CONFIG.paths.logs_dir)

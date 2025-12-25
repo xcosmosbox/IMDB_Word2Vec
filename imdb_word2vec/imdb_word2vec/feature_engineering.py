@@ -577,25 +577,125 @@ def save_sequences_to_csv(
     vocab: Dict[str, int],
     output_path: Path,
     max_seq_len: int = 100,  # 增加到 100
+    vocab_limit: Optional[int] = None,
 ) -> None:
     """
-    将序列保存为 CSV 文件。
+    将序列保存为 CSV 文件（流式写入，避免内存溢出）。
     
-    填充策略：使用 0 (<PAD>) 填充，这是专门的填充 token，不会产生幻觉。
+    关键改进：token ID 重新映射，确保所有 ID 落在 [0, vocab_limit) 范围内。
+    - 保留 PAD_TOKEN (0) 和 "<UNK>" (1)
+    - 保留最频繁的 vocab_limit-2 个其他 token
+    - 超出范围的 token 映射为 UNK (1)
+    
+    填充策略：使用 0 (<PAD>) 填充，这是专门的填充 token。
     """
-    int_sequences = []
-    for seq in tqdm(sequences, desc="转换序列为整数"):
-        int_seq = [vocab.get(token, 1) for token in seq]
-        if len(int_seq) > max_seq_len:
-            int_seq = int_seq[:max_seq_len]
-        else:
-            int_seq = int_seq + [0] * (max_seq_len - len(int_seq))  # 0 = <PAD>
-        int_sequences.append(int_seq)
+    import csv
     
+    if vocab_limit is None:
+        vocab_limit = CONFIG.train.vocab_limit
+    
+    logger.info("========== Token 重新映射 ==========")
+    logger.info("原始词汇表大小: %d", len(vocab))
+    logger.info("目标词汇表大小: %d", vocab_limit)
+    
+    # ========== Step 1: 统计每个 token 的出现频率 ==========
+    token_freq: Dict[str, int] = {}
+    for seq in sequences:
+        for token in seq:
+            token_freq[token] = token_freq.get(token, 0) + 1
+    
+    # ========== Step 2: 按频率排序，保留最频繁的 vocab_limit-2 个 ==========
+    # 预留 0 (PAD) 和 1 (UNK)
+    sorted_tokens = sorted(
+        token_freq.items(),
+        key=lambda x: -x[1]  # 降序排列
+    )[:vocab_limit - 2]
+    
+    # ========== Step 3: 构建新的 vocab（重新映射）==========
+    new_vocab: Dict[str, int] = {PAD_TOKEN: 0, "<UNK>": 1}
+    for idx, (token, freq) in enumerate(sorted_tokens):
+        new_vocab[token] = 2 + idx  # 从 ID 2 开始
+    
+    logger.info("新词汇表大小: %d (保留频率最高的 %d 个 token)", 
+                len(new_vocab), len(sorted_tokens))
+    
+    num_remapped = len(vocab) - len(new_vocab)
+    logger.info("重新映射的 token 数: %d (将映射为 UNK)", num_remapped)
+    
+    # ========== Step 4: 流式写入序列（使用新 vocab 映射）==========
     columns = [f"token_{i}" for i in range(max_seq_len)]
-    df = pd.DataFrame(int_sequences, columns=columns)
-    df.to_csv(output_path, index=False)
-    logger.info("序列数据已保存: %s (%d 行, 长度 %d)", output_path, len(df), max_seq_len)
+    chunk_size = 100000  # 每次处理 100k 序列
+    int_sequences = []
+    total_rows = 0
+    remapped_count = 0
+    
+    with open(output_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(columns)
+        
+        for seq in tqdm(sequences, desc="转换序列为整数（重新映射）"):
+            int_seq = []
+            for token in seq:
+                # 使用新 vocab 映射，未出现的 token 用 UNK (1)
+                token_id = new_vocab.get(token, 1)
+                if token not in new_vocab:
+                    remapped_count += 1
+                int_seq.append(token_id)
+            
+            # 截断或填充到 max_seq_len
+            if len(int_seq) > max_seq_len:
+                int_seq = int_seq[:max_seq_len]
+            else:
+                int_seq = int_seq + [0] * (max_seq_len - len(int_seq))
+            
+            int_sequences.append(int_seq)
+            
+            # 批量写入
+            if len(int_sequences) >= chunk_size:
+                writer.writerows(int_sequences)
+                total_rows += len(int_sequences)
+                int_sequences = []
+        
+        # 处理剩余
+        if int_sequences:
+            writer.writerows(int_sequences)
+            total_rows += len(int_sequences)
+    
+    logger.info("========== 映射完成 ==========")
+    logger.info("序列数据已保存: %s (%d 行, 长度 %d)", output_path, total_rows, max_seq_len)
+    logger.info("被重新映射为 UNK 的 token 实例: %d", remapped_count)
+    
+    # 保存新词汇表供后续使用（覆盖原词汇表）
+    vocab_path = CONFIG.paths.vocab_path
+    pd.Series(new_vocab).to_csv(vocab_path, header=False)
+    logger.info("更新后的词汇表已保存: %s (大小: %d)", vocab_path, len(new_vocab))
+
+
+# 辅助：按组保存/加载序列，便于断点续跑
+def _seq_group_path(cache_dir: Path, name: str) -> Path:
+    seq_dir = cache_dir / "sequences"
+    seq_dir.mkdir(parents=True, exist_ok=True)
+    return seq_dir / f"{name}.csv"
+
+
+def _save_seq_group(sequences: List[List[str]], path: Path) -> None:
+    import csv
+    with open(path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerows(sequences)
+    logger.info("已保存序列组: %s (%d 条)", path, len(sequences))
+
+
+def _load_seq_group(path: Path) -> List[List[str]]:
+    import csv
+    sequences: List[List[str]] = []
+    with open(path, 'r', newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if row:
+                sequences.append(row)
+    logger.info("已加载序列组: %s (%d 条)", path, len(sequences))
+    return sequences
 
 
 # ========== Autoencoder 表格特征 ==========
@@ -672,6 +772,7 @@ def run_feature_engineering(
     movies_info_df: pd.DataFrame,
     staff_df: pd.DataFrame,
     regional_titles_df: pd.DataFrame,
+    resume: bool = True,
 ) -> Tuple[Path, Path, Path]:
     """
     执行特征工程：生成 Word2Vec 序列数据和 Autoencoder 表格特征。
@@ -707,51 +808,100 @@ def run_feature_engineering(
     
     # ==================== Part 1: Word2Vec 序列数据 ====================
     logger.info("---------- 生成 Word2Vec 序列 ----------")
-    all_sequences = []
-    
+    all_sequences: List[List[str]] = []
+
+    # helper for per-group checkpoint files
+    def _seq_path(name: str) -> Path:
+        return _seq_group_path(cache_dir, name)
+
     # 1. 人员-电影序列（去重版）
-    person_movie_seqs = _generate_person_movie_sequences(
-        staff_df, title_crew_df, title_principals_df,
-        max_movies_per_person=100
-    )
+    person_path = _seq_path("person_movie_seqs")
+    if resume and person_path.exists():
+        person_movie_seqs = _load_seq_group(person_path)
+    else:
+        person_movie_seqs = _generate_person_movie_sequences(
+            staff_df, title_crew_df, title_principals_df,
+            max_movies_per_person=100
+        )
+        _save_seq_group(person_movie_seqs, person_path)
     all_sequences.extend(person_movie_seqs)
-    
+
     # 2. 电影-上下文序列
-    movie_context_seqs = _generate_movie_context_sequences(
-        movies_info_df, title_principals_df, title_crew_df,
-        max_actors_per_movie=20,
-        max_directors_per_movie=5
-    )
+    movie_path = _seq_path("movie_context_seqs")
+    if resume and movie_path.exists():
+        movie_context_seqs = _load_seq_group(movie_path)
+    else:
+        movie_context_seqs = _generate_movie_context_sequences(
+            movies_info_df, title_principals_df, title_crew_df,
+            max_actors_per_movie=20,
+            max_directors_per_movie=5
+        )
+        _save_seq_group(movie_context_seqs, movie_path)
     all_sequences.extend(movie_context_seqs)
-    
+
     # 3. 系列-剧集序列
-    series_episode_seqs = _generate_series_episode_sequences(title_episode_df)
+    series_path = _seq_path("series_episode_seqs")
+    if resume and series_path.exists():
+        series_episode_seqs = _load_seq_group(series_path)
+    else:
+        series_episode_seqs = _generate_series_episode_sequences(title_episode_df)
+        _save_seq_group(series_episode_seqs, series_path)
     all_sequences.extend(series_episode_seqs)
-    
+
     # 4. 合作演员序列
-    coactor_seqs = _generate_coactor_sequences(title_principals_df, max_coactors=20)
+    coactor_path = _seq_path("coactor_seqs")
+    if resume and coactor_path.exists():
+        coactor_seqs = _load_seq_group(coactor_path)
+    else:
+        coactor_seqs = _generate_coactor_sequences(title_principals_df, max_coactors=20)
+        _save_seq_group(coactor_seqs, coactor_path)
     all_sequences.extend(coactor_seqs)
-    
+
     # 5. 类型-电影序列（全量）
-    genre_movie_seqs = _generate_genre_movie_sequences(movies_info_df, max_movies_per_genre=None)
+    genre_path = _seq_path("genre_movie_seqs")
+    if resume and genre_path.exists():
+        genre_movie_seqs = _load_seq_group(genre_path)
+    else:
+        genre_movie_seqs = _generate_genre_movie_sequences(movies_info_df, max_movies_per_genre=None)
+        _save_seq_group(genre_movie_seqs, genre_path)
     all_sequences.extend(genre_movie_seqs)
-    
+
     # 6. 年代-电影序列（新增）
-    era_movie_seqs = _generate_era_movie_sequences(movies_info_df, max_movies_per_era=None)
+    era_path = _seq_path("era_movie_seqs")
+    if resume and era_path.exists():
+        era_movie_seqs = _load_seq_group(era_path)
+    else:
+        era_movie_seqs = _generate_era_movie_sequences(movies_info_df, max_movies_per_era=None)
+        _save_seq_group(era_movie_seqs, era_path)
     all_sequences.extend(era_movie_seqs)
-    
+
     # 7. 评分-电影序列（新增）
-    rating_movie_seqs = _generate_rating_movie_sequences(movies_info_df, max_movies_per_rating=None)
+    rating_path = _seq_path("rating_movie_seqs")
+    if resume and rating_path.exists():
+        rating_movie_seqs = _load_seq_group(rating_path)
+    else:
+        rating_movie_seqs = _generate_rating_movie_sequences(movies_info_df, max_movies_per_rating=None)
+        _save_seq_group(rating_movie_seqs, rating_path)
     all_sequences.extend(rating_movie_seqs)
-    
+
     # 8. 导演-类型偏好序列（新增）
-    director_genre_seqs = _generate_director_genre_sequences(movies_info_df, title_crew_df)
+    director_path = _seq_path("director_genre_seqs")
+    if resume and director_path.exists():
+        director_genre_seqs = _load_seq_group(director_path)
+    else:
+        director_genre_seqs = _generate_director_genre_sequences(movies_info_df, title_crew_df)
+        _save_seq_group(director_genre_seqs, director_path)
     all_sequences.extend(director_genre_seqs)
-    
+
     # 9. 演员-类型偏好序列（新增）
-    actor_genre_seqs = _generate_actor_genre_sequences(movies_info_df, title_principals_df)
+    actor_path = _seq_path("actor_genre_seqs")
+    if resume and actor_path.exists():
+        actor_genre_seqs = _load_seq_group(actor_path)
+    else:
+        actor_genre_seqs = _generate_actor_genre_sequences(movies_info_df, title_principals_df)
+        _save_seq_group(actor_genre_seqs, actor_path)
     all_sequences.extend(actor_genre_seqs)
-    
+
     logger.info("========== 序列统计 ==========")
     logger.info("1. 人员-电影序列: %d", len(person_movie_seqs))
     logger.info("2. 电影-上下文序列: %d", len(movie_context_seqs))
@@ -763,20 +913,22 @@ def run_feature_engineering(
     logger.info("8. 导演-类型偏好: %d", len(director_genre_seqs))
     logger.info("9. 演员-类型偏好: %d", len(actor_genre_seqs))
     logger.info("总序列数: %d", len(all_sequences))
-    
+
+    logger.info("所有序列生成完成，开始合并...")
     random.shuffle(all_sequences)
-    
+
     # 构建词汇表
     vocab = build_vocab_from_sequences(all_sequences)
     
-    vocab_path = CONFIG.paths.vocab_path
-    vocab_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.Series(vocab).to_csv(vocab_path, header=False)
-    logger.info("词汇表已保存: %s", vocab_path)
-    
-    # 保存序列（长度 100）
+    logger.info("原始词汇表规模: %d", len(vocab))
+
+    # 保存映射后的序列（长度 100）+ 自动重新映射 token 到有效范围
+    # 这一步会自动根据 vocab_limit 重新映射 token 并保存新的词汇表
     sequences_path = CONFIG.paths.final_mapped_path
-    save_sequences_to_csv(all_sequences, vocab, sequences_path, max_seq_len=100)
+    if resume and sequences_path.exists():
+        logger.info("映射后的序列文件已存在，跳过写入: %s", sequences_path)
+    else:
+        save_sequences_to_csv(all_sequences, vocab, sequences_path, max_seq_len=100)
     
     # ==================== Part 2: Autoencoder 表格特征 ====================
     logger.info("---------- 生成 Autoencoder 表格特征 ----------")

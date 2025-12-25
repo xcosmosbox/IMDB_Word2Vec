@@ -1,0 +1,24 @@
+{
+  "vocab_size": 50000,
+  "embedding_dim": 128,
+  "entity_types": {
+    "OTHER": 2,
+    "GEN": 28,
+    "RAT": 19,
+    "TYP": 8,
+    "ERA": 13,
+    "MOV": 26367,
+    "ACT": 22909,
+    "DIR": 654
+  },
+  "similarity_metric": "cosine",
+  "top_k_default": 10,
+  "files": {
+    "onnx_model": "word2vec.onnx",
+    "embeddings_json": "embeddings.json",
+    "clustering_json": "clustering.json",
+    "token_to_id": "token_to_id.json",
+    "id_to_token": "id_to_token.json",
+    "entity_index": "entity_index.json"
+  }
+}

@@ -421,7 +421,8 @@ def train_word2vec_from_cache(
         model.compile(
             optimizer=optimizer,
             loss=loss_fn,
-            metrics=["accuracy", positive_recall]
+            metrics=["accuracy", positive_recall],
+            jit_compile=CONFIG.train.enable_jit_compile
         )
     
     logger.info("  ├─ 模型已编译")
@@ -776,7 +777,8 @@ def train_word2vec(
         model.compile(
             optimizer=optimizer,
             loss=loss_fn,
-            metrics=["accuracy", positive_recall]
+            metrics=["accuracy", positive_recall],
+            jit_compile=CONFIG.train.enable_jit_compile
         )
     
     # 打印模型参数统计
