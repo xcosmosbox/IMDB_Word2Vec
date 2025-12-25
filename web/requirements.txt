@@ -1,0 +1,20 @@
+# IMDB Word2Vec 可视化看板依赖
+# ================================
+
+# Web 框架
+streamlit>=1.28.0
+
+# 可视化
+plotly>=5.18.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 机器学习 - 降维算法
+scikit-learn>=1.3.0
+umap-learn>=0.5.4
+
+# ONNX 推理
+onnxruntime>=1.16.0
+

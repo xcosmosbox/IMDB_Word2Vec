@@ -1,0 +1,25 @@
+# Streamlit 配置文件
+# ====================
+
+[theme]
+# 深色主题配置
+primaryColor = "#00d4ff"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1a1a2e"
+textColor = "#e0e0e0"
+font = "sans serif"
+
+[server]
+# 服务器配置
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+# 浏览器配置
+gatherUsageStats = false
+
+[runner]
+# 运行配置
+magicEnabled = true
+
