@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import ENTITY_TYPE_NAMES, ENTITY_TYPE_COLORS
+from utils.name_mapping import get_display_name
 
 
 def render_entity_card(
@@ -42,6 +43,9 @@ def render_entity_card(
     type_name = ENTITY_TYPE_NAMES.get(entity_type, entity_type)
     color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
     
+    # 获取真实名称
+    display_name = get_display_name(token)
+    
     # 卡片容器
     with st.container():
         # 标题行
@@ -62,10 +66,10 @@ def render_entity_card(
                         border-radius: 4px;
                         font-size: 0.8em;
                     ">{type_name}</span>
-                    <span style="font-size: 1.2em; font-weight: bold;">{entity_id}</span>
+                    <span style="font-size: 1.2em; font-weight: bold;">{display_name}</span>
                 </div>
                 <div style="margin-top: 8px; color: #888; font-size: 0.9em;">
-                    完整标识: <code>{token}</code>
+                    IMDB ID: <code>{entity_id}</code>
                 </div>
             </div>
             """,
@@ -125,6 +129,7 @@ def render_entity_list(
         
         type_name = ENTITY_TYPE_NAMES.get(entity_type, entity_type)
         color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
+        display_name = get_display_name(token)
         
         col1, col2 = st.columns([1, 4])
         with col1:
@@ -134,10 +139,10 @@ def render_entity_list(
             )
         with col2:
             if on_click:
-                if st.button(token, key=f"entity_{i}_{token}"):
+                if st.button(display_name, key=f"entity_{i}_{token}"):
                     on_click(token)
             else:
-                st.code(token, language=None)
+                st.text(display_name)
     
     if len(tokens) > max_display:
         st.caption(f"... 还有 {len(tokens) - max_display} 个实体")
@@ -159,6 +164,7 @@ def render_entity_badge(token: str) -> str:
         entity_type = "OTHER"
     
     color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
+    display_name = get_display_name(token)
     
     return f"""
     <span style="
@@ -167,7 +173,7 @@ def render_entity_badge(token: str) -> str:
         padding: 2px 8px;
         border-radius: 12px;
         font-size: 0.85em;
-    ">{token}</span>
+    ">{display_name}</span>
     """
 
 
@@ -186,13 +192,12 @@ def render_mini_card(
     """
     if "_" in token:
         entity_type = token.split("_")[0]
-        entity_id = token.split("_", 1)[1]
     else:
         entity_type = "OTHER"
-        entity_id = token
     
     type_name = ENTITY_TYPE_NAMES.get(entity_type, entity_type)
     color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
+    display_name = get_display_name(token)
     
     rank_str = f"#{rank}" if rank else ""
     sim_str = f"{similarity:.4f}" if similarity else ""
@@ -210,7 +215,7 @@ def render_mini_card(
         ">
             <div>
                 <span style="color:{color};margin-right:8px;">●</span>
-                <span style="font-weight:500;">{entity_id}</span>
+                <span style="font-weight:500;">{display_name}</span>
                 <span style="color:#888;font-size:0.8em;margin-left:8px;">{type_name}</span>
             </div>
             <div>

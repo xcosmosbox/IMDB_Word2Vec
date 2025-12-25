@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import ENTITY_TYPE_NAMES, ENTITY_TYPE_COLORS
+from utils.name_mapping import get_display_name
 
 
 def render_similarity_list(
@@ -44,11 +45,11 @@ def render_similarity_list(
         # 解析实体类型
         if "_" in token:
             entity_type = token.split("_")[0]
-            entity_id = token.split("_", 1)[1]
         else:
             entity_type = "OTHER"
-            entity_id = token
         
+        # 获取显示名称（真实的电影名/演员名）
+        display_name = get_display_name(token)
         type_name = ENTITY_TYPE_NAMES.get(entity_type, entity_type)
         color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
         
@@ -70,7 +71,7 @@ def render_similarity_list(
                 f"""
                 <div style="padding: 5px 0;">
                     <span style="color:{color}">●</span>
-                    <strong>{entity_id}</strong>
+                    <strong>{display_name}</strong>
                     <span style="color:#888;font-size:0.8em;">({type_name})</span>
                 </div>
                 """,
@@ -138,12 +139,15 @@ def render_similarity_table(
     )
     df["type_name"] = df["entity_type"].map(ENTITY_TYPE_NAMES)
     
+    # 获取显示名称
+    df["display_name"] = df["token"].apply(get_display_name)
+    
     # 格式化相似度
     df["相似度"] = df["similarity"].apply(lambda x: f"{x:.4f}")
     
     # 重命名列
-    display_df = df[["rank", "token", "type_name", "相似度"]].copy()
-    display_df.columns = ["排名", "Token", "类型", "相似度"]
+    display_df = df[["rank", "display_name", "type_name", "相似度"]].copy()
+    display_df.columns = ["排名", "名称", "类型", "相似度"]
     
     # 使用 st.dataframe 显示
     st.dataframe(
@@ -156,8 +160,8 @@ def render_similarity_table(
                 format="%d",
                 width="small",
             ),
-            "Token": st.column_config.TextColumn(
-                "Token",
+            "名称": st.column_config.TextColumn(
+                "名称",
                 width="medium",
             ),
             "类型": st.column_config.TextColumn(
@@ -194,6 +198,10 @@ def render_compact_similarity_list(
             entity_type = "OTHER"
         
         color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
+        display_name = get_display_name(token)
+        
+        # 截断过长的名称
+        display_text = display_name[:25] + '...' if len(display_name) > 25 else display_name
         
         st.markdown(
             f"""
@@ -205,7 +213,7 @@ def render_compact_similarity_list(
             ">
                 <span>
                     <span style="color:{color}">●</span>
-                    {token[:20]}{'...' if len(token) > 20 else ''}
+                    {display_text}
                 </span>
                 <span style="color:#4ecdc4;">{similarity:.3f}</span>
             </div>

@@ -125,7 +125,7 @@ def compute_tsne(
     embeddings: np.ndarray,
     n_components: int = 2,
     perplexity: float = DimReductionParams.TSNE_PERPLEXITY,
-    n_iter: int = DimReductionParams.TSNE_N_ITER,
+    max_iter: int = DimReductionParams.TSNE_N_ITER,
     random_state: int = DimReductionParams.TSNE_RANDOM_STATE,
 ) -> np.ndarray:
     """
@@ -141,22 +141,35 @@ def compute_tsne(
         embeddings: shape (n_samples, n_features) 的嵌入矩阵
         n_components: 目标维度数，默认为 2
         perplexity: 困惑度，影响局部结构保留
-        n_iter: 迭代次数
+        max_iter: 最大迭代次数 (新版 sklearn 使用 max_iter 替代 n_iter)
         random_state: 随机种子
         
     Returns:
         shape (n_samples, n_components) 的降维结果
     """
     from sklearn.manifold import TSNE
+    import sklearn
     
-    # 创建 t-SNE 模型
-    tsne = TSNE(
-        n_components=n_components,
-        perplexity=perplexity,
-        n_iter=n_iter,
-        random_state=random_state,
-        init="pca",  # 使用 PCA 初始化，提高稳定性
-    )
+    # 检查 sklearn 版本，决定使用 n_iter 还是 max_iter
+    sklearn_version = tuple(map(int, sklearn.__version__.split('.')[:2]))
+    
+    # sklearn >= 1.5 使用 max_iter，之前版本使用 n_iter
+    if sklearn_version >= (1, 5):
+        tsne = TSNE(
+            n_components=n_components,
+            perplexity=perplexity,
+            max_iter=max_iter,
+            random_state=random_state,
+            init="pca",
+        )
+    else:
+        tsne = TSNE(
+            n_components=n_components,
+            perplexity=perplexity,
+            n_iter=max_iter,
+            random_state=random_state,
+            init="pca",
+        )
     
     # 执行降维
     reduced = tsne.fit_transform(embeddings)

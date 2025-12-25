@@ -2,7 +2,7 @@
 工具模块包
 =========
 
-包含数据加载、降维、相似度计算、ONNX推理、可视化等工具函数。
+包含数据加载、降维、相似度计算、ONNX推理、可视化、名称映射等工具函数。
 """
 from .data_loader import (
     load_config,
@@ -35,5 +35,12 @@ from .visualization import (
     create_heatmap,
     create_network_graph,
     create_bar_chart,
+)
+from .name_mapping import (
+    get_display_name,
+    token_to_display,
+    get_entity_display_info,
+    format_entity_label,
+    search_by_name,
 )
 

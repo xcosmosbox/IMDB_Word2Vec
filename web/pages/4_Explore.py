@@ -124,11 +124,23 @@ st.markdown("""
 结果向量 = Σ(正向项) - Σ(负向项)
 """)
 
+# 检查是否有预设值要应用
+if "preset_positive" in st.session_state:
+    default_positive = st.session_state.pop("preset_positive")
+else:
+    default_positive = ""
+
+if "preset_negative" in st.session_state:
+    default_negative = st.session_state.pop("preset_negative")
+else:
+    default_negative = ""
+
 # 正向项
 st.markdown("### ➕ 正向项 (相加)")
 
 positive_input = st.text_input(
     "输入正向 Token (用逗号分隔)",
+    value=default_positive,
     placeholder="例如: MOV_tt0111161, GEN_Drama",
     key="positive_input",
 )
@@ -138,6 +150,7 @@ st.markdown("### ➖ 负向项 (相减)")
 
 negative_input = st.text_input(
     "输入负向 Token (用逗号分隔，可选)",
+    value=default_negative,
     placeholder="例如: GEN_Action",
     key="negative_input",
 )
@@ -249,37 +262,37 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.markdown("**类型探索**")
     if st.button("动作 + 喜剧", key="example1"):
-        st.session_state["positive_input"] = "GEN_Action, GEN_Comedy"
-        st.session_state["negative_input"] = ""
+        st.session_state["preset_positive"] = "GEN_Action, GEN_Comedy"
+        st.session_state["preset_negative"] = ""
         st.rerun()
     
     if st.button("恐怖 - 惊悚", key="example2"):
-        st.session_state["positive_input"] = "GEN_Horror"
-        st.session_state["negative_input"] = "GEN_Thriller"
+        st.session_state["preset_positive"] = "GEN_Horror"
+        st.session_state["preset_negative"] = "GEN_Thriller"
         st.rerun()
 
 with col2:
     st.markdown("**年代探索**")
     if st.button("90年代 + 动作", key="example3"):
-        st.session_state["positive_input"] = "ERA_1990s, GEN_Action"
-        st.session_state["negative_input"] = ""
+        st.session_state["preset_positive"] = "ERA_1990s, GEN_Action"
+        st.session_state["preset_negative"] = ""
         st.rerun()
     
     if st.button("2020s - 2010s", key="example4"):
-        st.session_state["positive_input"] = "ERA_2020s"
-        st.session_state["negative_input"] = "ERA_2010s"
+        st.session_state["preset_positive"] = "ERA_2020s"
+        st.session_state["preset_negative"] = "ERA_2010s"
         st.rerun()
 
 with col3:
     st.markdown("**评分探索**")
     if st.button("高分 (8.5+)", key="example5"):
-        st.session_state["positive_input"] = "RAT_8.5, RAT_9.0"
-        st.session_state["negative_input"] = ""
+        st.session_state["preset_positive"] = "RAT_8.5, RAT_9.0"
+        st.session_state["preset_negative"] = ""
         st.rerun()
     
     if st.button("高分 - 低分", key="example6"):
-        st.session_state["positive_input"] = "RAT_9.0"
-        st.session_state["negative_input"] = "RAT_5.0"
+        st.session_state["preset_positive"] = "RAT_9.0"
+        st.session_state["preset_negative"] = "RAT_5.0"
         st.rerun()
 
 

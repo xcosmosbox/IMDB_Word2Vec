@@ -303,13 +303,14 @@ def get_token_info(token: str) -> Dict[str, Any]:
     }
 
 
-def search_tokens(query: str, limit: int = 20) -> List[str]:
+def search_tokens(query: str, limit: int = 20, include_names: bool = True) -> List[str]:
     """
-    搜索 Token (模糊匹配)
+    搜索 Token (支持 Token 和名称的模糊匹配)
     
     Args:
-        query: 搜索关键词
+        query: 搜索关键词（可以是 Token 或真实名称）
         limit: 返回结果数量上限
+        include_names: 是否同时搜索真实名称
         
     Returns:
         匹配的 Token 列表
@@ -317,10 +318,23 @@ def search_tokens(query: str, limit: int = 20) -> List[str]:
     token_to_id = load_token_to_id()
     query_lower = query.lower()
     
+    # 先搜索 Token
     matches = [
         token for token in token_to_id.keys()
         if query_lower in token.lower()
     ]
+    
+    # 如果启用名称搜索，也搜索真实名称
+    if include_names and len(matches) < limit:
+        try:
+            from .name_mapping import search_by_name
+            name_matches = search_by_name(query, limit=limit - len(matches))
+            # 合并结果，去重
+            for token in name_matches:
+                if token not in matches:
+                    matches.append(token)
+        except ImportError:
+            pass
     
     return matches[:limit]
 
