@@ -111,6 +111,14 @@ with st.sidebar:
     
     # ONNX 模型信息
     st.markdown("#### ⚙️ ONNX 模型")
+    
+    # 检查 onnxruntime 是否可用
+    try:
+        import onnxruntime
+        st.caption(f"onnxruntime: v{onnxruntime.__version__}")
+    except ImportError:
+        st.error("onnxruntime 未安装")
+    
     model = get_model()
     if model.session:
         model_info = model.get_model_info()
@@ -118,6 +126,7 @@ with st.sidebar:
         st.caption(f"大小: {model_info.get('model_size_mb', 0)} MB")
     else:
         st.error("模型加载失败")
+        st.caption(f"模型路径: {model.model_path}")
 
 
 # =============================================================================
@@ -190,11 +199,22 @@ if selected_token:
     st.markdown(f"## 📌 查询实体: `{selected_token}`")
     
     # 获取嵌入向量
-    query_vec = get_embedding(selected_token)
+    model = get_model()
     
-    if query_vec is None:
-        st.error("无法获取该实体的嵌入向量")
+    # 检查失败原因
+    if model.session is None:
+        st.error("⚠️ ONNX 模型未加载，无法进行推理")
+        st.info("请检查 ONNX 模型文件是否存在，或查看控制台错误信息")
+        query_vec = None
+    elif selected_token not in model.token_to_id:
+        st.error(f"⚠️ Token `{selected_token}` 不在词汇表中")
+        query_vec = None
     else:
+        query_vec = get_embedding(selected_token)
+        if query_vec is None:
+            st.error("⚠️ ONNX 推理失败，请检查控制台错误信息")
+    
+    if query_vec is not None:
         # 显示实体信息
         col1, col2 = st.columns([1, 2])
         

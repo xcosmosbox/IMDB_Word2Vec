@@ -87,26 +87,30 @@ class OnnxEmbeddingModel:
         """
         try:
             import onnxruntime as ort
-        except ImportError:
-            st.error("请安装 onnxruntime: pip install onnxruntime")
+        except ImportError as e:
+            st.error(f"请安装 onnxruntime: pip install onnxruntime (错误: {e})")
             return None
         
         if not self.model_path.exists():
             st.error(f"ONNX 模型文件不存在: {self.model_path}")
             return None
         
-        # 创建推理会话
-        # 使用 CPU 执行，确保兼容性
-        session_options = ort.SessionOptions()
-        session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        
-        session = ort.InferenceSession(
-            str(self.model_path),
-            session_options,
-            providers=["CPUExecutionProvider"],
-        )
-        
-        return session
+        try:
+            # 创建推理会话
+            # 使用 CPU 执行，确保兼容性
+            session_options = ort.SessionOptions()
+            session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            
+            session = ort.InferenceSession(
+                str(self.model_path),
+                session_options,
+                providers=["CPUExecutionProvider"],
+            )
+            
+            return session
+        except Exception as e:
+            st.error(f"加载 ONNX 模型失败: {e}")
+            return None
     
     def get_embedding_by_id(self, token_id: int) -> Optional[np.ndarray]:
         """
