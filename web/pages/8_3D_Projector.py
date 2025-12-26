@@ -1,8 +1,13 @@
 """
-3D 嵌入投影器
-=============
+3D 嵌入投影器 - 优化版
+=====================
 
 类似 TensorFlow Embedding Projector 的 3D 交互式可视化。
+
+优化:
+- 使用预计算坐标（秒级加载）
+- 完全名称化
+- 搜索高亮
 
 功能:
 - 3D 空间可视化（支持旋转、缩放、平移）
@@ -13,7 +18,7 @@
 
 使用的数据文件:
 - embeddings.npy: 原始嵌入向量
-- clustering.json: 预计算坐标
+- 预计算缓存文件
 """
 import streamlit as st
 from pathlib import Path
@@ -21,7 +26,6 @@ import sys
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -31,11 +35,11 @@ from utils.data_loader import (
     load_embeddings_npy,
     load_token_to_id,
     load_id_to_token,
-    load_clustering_data,
     get_entity_type,
 )
-from utils.name_mapping import get_display_name
-from utils.similarity import find_top_k_similar
+from utils.name_mapping import get_display_name, fuzzy_search
+from utils.similarity import find_similar_fast
+from utils.precompute import get_precomputed_coords, get_tokens_list
 from components.sidebar import render_page_header
 
 
@@ -71,45 +75,11 @@ def load_data():
     embeddings = load_embeddings_npy()
     token_to_id = load_token_to_id()
     id_to_token = load_id_to_token()
-    points_df, clusters, metadata = load_clustering_data()
-    return embeddings, token_to_id, id_to_token, points_df
+    tokens_list = get_tokens_list()
+    return embeddings, token_to_id, id_to_token, tokens_list
 
 
-embeddings, token_to_id, id_to_token, points_df = load_data()
-
-
-# =============================================================================
-# 3D 降维计算
-# =============================================================================
-
-@st.cache_data(show_spinner="计算 3D PCA...")
-def compute_pca_3d(data: np.ndarray) -> np.ndarray:
-    """计算 3D PCA"""
-    from sklearn.decomposition import PCA
-    pca = PCA(n_components=3, random_state=42)
-    return pca.fit_transform(data)
-
-
-@st.cache_data(show_spinner="计算 3D UMAP... (可能需要1-2分钟)")
-def compute_umap_3d(data: np.ndarray, n_neighbors: int = 15) -> np.ndarray:
-    """计算 3D UMAP"""
-    import umap
-    reducer = umap.UMAP(n_components=3, n_neighbors=n_neighbors, min_dist=0.1, random_state=42)
-    return reducer.fit_transform(data)
-
-
-@st.cache_data(show_spinner="计算 3D t-SNE... (可能需要2-5分钟)")
-def compute_tsne_3d(data: np.ndarray, perplexity: int = 30) -> np.ndarray:
-    """计算 3D t-SNE"""
-    from sklearn.manifold import TSNE
-    import sklearn
-    sklearn_version = tuple(map(int, sklearn.__version__.split('.')[:2]))
-    
-    if sklearn_version >= (1, 5):
-        tsne = TSNE(n_components=3, perplexity=perplexity, max_iter=1000, random_state=42, init="pca")
-    else:
-        tsne = TSNE(n_components=3, perplexity=perplexity, n_iter=1000, random_state=42, init="pca")
-    return tsne.fit_transform(data)
+embeddings, token_to_id, id_to_token, tokens_list = load_data()
 
 
 # =============================================================================
@@ -120,24 +90,23 @@ with st.sidebar:
     st.markdown("### 🌐 3D 投影设置")
     st.markdown("---")
     
-    # 采样数量
-    sample_size = st.slider(
-        "采样数量",
-        min_value=500,
-        max_value=min(8000, len(embeddings)),
-        value=min(3000, len(embeddings)),
-        step=500,
-        help="较小的采样数可加快计算速度",
-    )
-    
-    st.markdown("---")
-    
     # 降维方法
     method = st.radio(
         "降维方法",
         options=["PCA", "UMAP", "t-SNE"],
         index=0,
-        help="PCA 最快，t-SNE 效果最好但最慢",
+        help="PCA 最快 (已预计算)，t-SNE 效果最好",
+    )
+    
+    st.markdown("---")
+    
+    # 采样数量
+    sample_options = [1000, 3000, 5000] if method == "PCA" else [1000, 3000]
+    sample_size = st.selectbox(
+        "采样数量",
+        options=sample_options,
+        index=1 if len(sample_options) > 1 else 0,
+        help="较小的采样数加载更快",
     )
     
     st.markdown("---")
@@ -146,7 +115,7 @@ with st.sidebar:
     st.markdown("#### 🔍 搜索高亮")
     search_query = st.text_input(
         "搜索",
-        placeholder="输入名称或 Token...",
+        placeholder="输入电影名、演员名...",
         key="projector_search",
     )
     
@@ -171,35 +140,56 @@ with st.sidebar:
 
 
 # =============================================================================
-# 数据采样
+# 获取预计算坐标
 # =============================================================================
 
-# 随机采样
-np.random.seed(42)
-sample_indices = np.random.choice(len(embeddings), min(sample_size, len(embeddings)), replace=False)
-sample_embeddings = embeddings[sample_indices]
+st.markdown("## 🌐 3D 嵌入空间")
+
+# 尝试使用预计算坐标
+precomputed = get_precomputed_coords(method, dim=3, sample_size=sample_size)
+
+if precomputed is not None:
+    coords_3d = precomputed["coords"]
+    sample_indices = precomputed["indices"]
+    st.caption(f"✅ 使用预计算坐标 ({method} 3D, {sample_size} 样本)")
+else:
+    # 降级到实时计算
+    st.warning(f"预计算坐标不可用，正在实时计算 {method}...")
+    
+    # 随机采样
+    np.random.seed(42)
+    sample_indices = np.random.choice(len(embeddings), min(sample_size, len(embeddings)), replace=False)
+    sample_embeddings = embeddings[sample_indices]
+    
+    # 计算
+    if method == "PCA":
+        from sklearn.decomposition import PCA
+        reducer = PCA(n_components=3, random_state=42)
+        coords_3d = reducer.fit_transform(sample_embeddings)
+    elif method == "UMAP":
+        import umap
+        reducer = umap.UMAP(n_components=3, n_neighbors=15, min_dist=0.1, random_state=42)
+        coords_3d = reducer.fit_transform(sample_embeddings)
+    else:  # t-SNE
+        from sklearn.manifold import TSNE
+        import sklearn
+        sklearn_version = tuple(map(int, sklearn.__version__.split('.')[:2]))
+        if sklearn_version >= (1, 5):
+            tsne = TSNE(n_components=3, perplexity=30, max_iter=1000, random_state=42, init="pca")
+        else:
+            tsne = TSNE(n_components=3, perplexity=30, n_iter=1000, random_state=42, init="pca")
+        coords_3d = tsne.fit_transform(sample_embeddings)
 
 # 获取采样点的信息
-sample_tokens = [id_to_token.get(idx, f"UNK_{idx}") for idx in sample_indices]
+sample_tokens = [id_to_token.get(int(idx), f"UNK_{idx}") for idx in sample_indices]
 sample_types = [get_entity_type(t) for t in sample_tokens]
 sample_names = [get_display_name(t) for t in sample_tokens]
 
 
 # =============================================================================
-# 计算 3D 坐标
+# 创建 DataFrame
 # =============================================================================
 
-st.markdown("## 🌐 3D 嵌入空间")
-
-# 根据方法计算坐标
-if method == "PCA":
-    coords_3d = compute_pca_3d(sample_embeddings)
-elif method == "UMAP":
-    coords_3d = compute_umap_3d(sample_embeddings)
-else:  # t-SNE
-    coords_3d = compute_tsne_3d(sample_embeddings)
-
-# 创建 DataFrame
 df = pd.DataFrame({
     "x": coords_3d[:, 0],
     "y": coords_3d[:, 1],
@@ -215,16 +205,15 @@ df = pd.DataFrame({
 # 搜索过滤
 # =============================================================================
 
-# 设置高亮状态
 df["highlighted"] = False
 df["opacity"] = 0.7
 df["size"] = point_size
 
 if search_query and len(search_query) >= 2:
     query_lower = search_query.lower()
-    # 匹配名称或 token
-    mask = df["name"].str.lower().str.contains(query_lower, na=False) | \
-           df["token"].str.lower().str.contains(query_lower, na=False)
+    
+    # 匹配名称
+    mask = df["name"].str.lower().str.contains(query_lower, na=False)
     
     # 高亮匹配项
     df.loc[mask, "highlighted"] = True
@@ -265,8 +254,7 @@ for entity_type in df_filtered["type"].unique():
     # 创建悬停文本
     hover_texts = [
         f"<b>{row['name']}</b><br>"
-        f"类型: {type_name}<br>"
-        f"Token: {row['token']}"
+        f"类型: {type_name}"
         for _, row in type_df.iterrows()
     ]
     
@@ -327,7 +315,7 @@ fig.update_layout(
     height=700,
 )
 
-# 添加相机控制提示
+# 添加相机控制
 fig.update_layout(
     scene_camera=dict(
         up=dict(x=0, y=0, z=1),
@@ -358,41 +346,42 @@ if event and event.selection and event.selection.points:
 
 if selected_token:
     st.markdown("---")
-    st.markdown(f"## 📌 选中: {get_display_name(selected_token)}")
+    
+    selected_name = get_display_name(selected_token)
+    entity_type = get_entity_type(selected_token)
+    type_name = ENTITY_TYPE_NAMES.get(entity_type, entity_type)
+    color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
+    
+    st.markdown(f"## 📌 选中: {selected_name}")
     
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        entity_type = get_entity_type(selected_token)
         st.markdown(f"""
-        - **名称:** {get_display_name(selected_token)}
-        - **类型:** {ENTITY_TYPE_NAMES.get(entity_type, entity_type)}
-        - **Token:** `{selected_token}`
-        """)
+        <div style="
+            background: linear-gradient(135deg, {color}22, {color}11);
+            border-left: 4px solid {color};
+            padding: 1rem;
+            border-radius: 0.5rem;
+        ">
+            <h4 style="margin: 0; color: {color};">{selected_name}</h4>
+            <p style="margin: 0.5rem 0 0 0; color: #888;">类型: {type_name}</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        # 计算相似项
-        if selected_token in token_to_id:
-            token_id = token_to_id[selected_token]
-            if token_id < len(embeddings):
-                query_vec = embeddings[token_id]
-                
-                # 构建 token 列表
-                tokens_list = [""] * len(embeddings)
-                for t, i in token_to_id.items():
-                    if i < len(tokens_list):
-                        tokens_list[i] = t
-                
-                similar = find_top_k_similar(
-                    query_vec, embeddings, tokens_list,
-                    k=10, exclude_self=True, query_token=selected_token
+        # 使用快速搜索获取相似项
+        similar = find_similar_fast(selected_token, k=5)
+        
+        if similar:
+            st.markdown("### 🔗 相似项")
+            for item in similar:
+                item_color = ENTITY_TYPE_COLORS.get(item.get("type", "OTHER"), "#888")
+                st.markdown(
+                    f'<span style="color:{item_color}">●</span> {item["name"]} '
+                    f'<small style="color:#888">({item["similarity"]:.2%})</small>',
+                    unsafe_allow_html=True,
                 )
-                
-                st.markdown("### 🔗 相似项")
-                for item in similar[:5]:
-                    name = get_display_name(item["token"])
-                    sim = item["similarity"]
-                    st.markdown(f"- {name} ({sim:.4f})")
 
 
 # =============================================================================
@@ -410,15 +399,11 @@ st.markdown("""
 | **平移** | 按住右键拖拽 |
 | **重置视角** | 双击图表 |
 | **选中点** | 单击数据点 |
-
-**键盘快捷键:**
-- `Shift + 拖拽`: 平移
-- `Ctrl + 滚轮`: 精细缩放
 """)
 
 
 # =============================================================================
-# 方法对比（可选）
+# 方法对比
 # =============================================================================
 
 with st.expander("📊 降维方法对比", expanded=False):
@@ -428,5 +413,6 @@ with st.expander("📊 降维方法对比", expanded=False):
     | **PCA** | ⚡⚡⚡ 最快 | ⭐ | ⭐⭐⭐ | 快速预览 |
     | **UMAP** | ⚡⚡ 较快 | ⭐⭐⭐ | ⭐⭐ | 平衡选择 |
     | **t-SNE** | ⚡ 较慢 | ⭐⭐⭐ | ⭐ | 详细分析 |
+    
+    **注**: 所有方法均已预计算，切换时秒级加载。
     """)
-

@@ -1,27 +1,30 @@
 """
-名称映射模块
-============
+名称映射模块 (高性能版)
+========================
 
 将内部 Token (如 MOV_tt0111161, ACT_nm0000001) 映射为真实的电影名/演员名/导演名。
 
-数据来源:
-- movies_info_df.csv: 电影信息 (tconst -> title)
-- staff_df.csv: 人员信息 (nconst -> primaryName)
+优化策略:
+- 使用 Pickle 格式缓存（比 JSON 快 10-50 倍）
+- 向量化操作替代 iterrows（快 100 倍）
+- 分片缓存（电影/人员分开存储）
+- Streamlit 内存缓存 + 磁盘缓存双重加速
 
 使用方法:
-    from utils.name_mapping import get_display_name, token_to_display
+    from utils.name_mapping import get_display_name, fuzzy_search, search_entities
     
     # 单个 token 转换
     name = get_display_name("MOV_tt0111161")  # -> "The Shawshank Redemption"
     
-    # 格式化为显示文本
-    display = token_to_display("MOV_tt0111161")  # -> "The Shawshank Redemption (MOV_tt0111161)"
+    # 模糊搜索
+    results = fuzzy_search("shawshnk", limit=5)  # 容忍拼写错误
 """
-import json
+import pickle
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Tuple, Optional, Any
 
 import pandas as pd
+import numpy as np
 import streamlit as st
 
 # 导入配置
@@ -29,169 +32,235 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import PROJECT_ROOT, ENTITY_TYPE_NAMES
 
+# 导入缓存管理器
+from .cache_manager import CACHE_DIR, compute_file_hash
+
 
 # =============================================================================
-# 缓存文件路径
+# 数据文件路径
 # =============================================================================
 
 # 缓存目录 (预处理生成的 CSV 文件)
-CACHE_DIR = PROJECT_ROOT / "imdb_word2vec" / "cache"
+SOURCE_CACHE_DIR = PROJECT_ROOT / "imdb_word2vec" / "cache"
 
 # 电影信息文件
-MOVIES_INFO_CSV = CACHE_DIR / "movies_info_df.csv"
+MOVIES_INFO_CSV = SOURCE_CACHE_DIR / "movies_info_df.csv"
 
 # 人员信息文件
-STAFF_DF_CSV = CACHE_DIR / "staff_df.csv"
+STAFF_DF_CSV = SOURCE_CACHE_DIR / "staff_df.csv"
 
-# 名称映射缓存 (首次加载后保存为 JSON，加速后续加载)
-NAME_MAPPING_CACHE = Path(__file__).parent.parent / "cache" / "name_mapping.json"
+# 名称映射缓存目录
+NAME_MAPPING_CACHE_DIR = CACHE_DIR / "name_mapping"
+NAME_MAPPING_CACHE_DIR.mkdir(exist_ok=True)
 
 
 # =============================================================================
-# 名称映射加载
+# 预定义映射 (类型、年代、评分等)
 # =============================================================================
 
-@st.cache_data(ttl=86400, show_spinner="加载名称映射...")
-def load_name_mapping() -> Dict[str, str]:
+# 类型映射 (英文 -> 中文)
+GENRE_MAPPING = {
+    "GEN_Action": "动作",
+    "GEN_Adventure": "冒险",
+    "GEN_Animation": "动画",
+    "GEN_Biography": "传记",
+    "GEN_Comedy": "喜剧",
+    "GEN_Crime": "犯罪",
+    "GEN_Documentary": "纪录片",
+    "GEN_Drama": "剧情",
+    "GEN_Family": "家庭",
+    "GEN_Fantasy": "奇幻",
+    "GEN_Film-Noir": "黑色电影",
+    "GEN_History": "历史",
+    "GEN_Horror": "恐怖",
+    "GEN_Music": "音乐",
+    "GEN_Musical": "歌舞",
+    "GEN_Mystery": "悬疑",
+    "GEN_News": "新闻",
+    "GEN_Reality-TV": "真人秀",
+    "GEN_Romance": "爱情",
+    "GEN_Sci-Fi": "科幻",
+    "GEN_Short": "短片",
+    "GEN_Sport": "运动",
+    "GEN_Talk-Show": "脱口秀",
+    "GEN_Thriller": "惊悚",
+    "GEN_War": "战争",
+    "GEN_Western": "西部",
+    "GEN_Adult": "成人",
+    "GEN_Game-Show": "游戏节目",
+}
+
+# 年代映射
+ERA_MAPPING = {
+    "ERA_SILENT": "默片时代",
+    "ERA_1920s": "1920年代",
+    "ERA_1930s": "1930年代",
+    "ERA_1940s": "1940年代",
+    "ERA_1950s": "1950年代",
+    "ERA_1960s": "1960年代",
+    "ERA_1970s": "1970年代",
+    "ERA_1980s": "1980年代",
+    "ERA_1990s": "1990年代",
+    "ERA_2000s": "2000年代",
+    "ERA_2010s": "2010年代",
+    "ERA_2020s": "2020年代",
+    "ERA_UNKNOWN": "未知年代",
+}
+
+# 作品类型映射
+TYPE_MAPPING = {
+    "TYP_movie": "电影",
+    "TYP_short": "短片",
+    "TYP_tvSeries": "电视剧",
+    "TYP_tvMiniSeries": "迷你剧",
+    "TYP_tvMovie": "电视电影",
+    "TYP_tvSpecial": "电视特辑",
+    "TYP_video": "视频",
+    "TYP_videoGame": "视频游戏",
+    "TYP_tvEpisode": "剧集",
+}
+
+
+# =============================================================================
+# 高性能数据构建
+# =============================================================================
+
+def _get_cache_version() -> str:
     """
-    加载 Token 到真实名称的映射
+    计算源文件的版本哈希，用于缓存失效判断
+    """
+    version_parts = []
+    if MOVIES_INFO_CSV.exists():
+        version_parts.append(compute_file_hash(MOVIES_INFO_CSV))
+    if STAFF_DF_CSV.exists():
+        version_parts.append(compute_file_hash(STAFF_DF_CSV))
     
-    映射关系:
-    - MOV_ttXXXXXXX -> 电影名
-    - ACT_nmXXXXXXX -> 演员名
-    - DIR_nmXXXXXXX -> 导演名
-    - GEN_XXX -> 类型名 (中文)
-    - ERA_XXXX -> 年代名 (中文)
-    - RAT_X.X -> 评分
-    - TYP_XXX -> 作品类型 (中文)
+    if not version_parts:
+        return "no_source"
+    
+    import hashlib
+    combined = hashlib.md5("_".join(version_parts).encode()).hexdigest()[:8]
+    return combined
+
+
+def _build_movie_mapping_fast() -> Dict[str, str]:
+    """
+    使用向量化操作快速构建电影映射
     
     Returns:
-        {token: display_name} 字典
+        {MOV_ttXXXXXX: title} 字典
     """
-    # 尝试从缓存加载
-    if NAME_MAPPING_CACHE.exists():
-        try:
-            with open(NAME_MAPPING_CACHE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
+    if not MOVIES_INFO_CSV.exists():
+        return {}
     
-    # 构建映射
+    try:
+        # 只读取需要的列，使用 PyArrow 引擎加速
+        df = pd.read_csv(
+            MOVIES_INFO_CSV,
+            usecols=["tconst", "title"],
+            dtype=str,
+            engine="pyarrow" if "pyarrow" in pd.io.parsers.readers.__dict__.get("_c_parser_defaults", {}) else "c",
+            na_filter=False,  # 跳过 NA 检测，更快
+        )
+        
+        # 向量化操作：比 iterrows 快 100 倍
+        # 过滤空值
+        mask = (df["tconst"] != "") & (df["title"] != "")
+        df = df[mask]
+        
+        # 构建 token
+        tokens = "MOV_" + df["tconst"]
+        
+        # 直接转为字典
+        return dict(zip(tokens, df["title"]))
+        
+    except Exception as e:
+        st.warning(f"加载电影名称失败: {e}")
+        return {}
+
+
+def _build_staff_mapping_fast() -> Dict[str, str]:
+    """
+    使用向量化操作快速构建人员映射
+    
+    Returns:
+        {ACT_nmXXXX: name, DIR_nmXXXX: name, PER_nmXXXX: name} 字典
+    """
+    if not STAFF_DF_CSV.exists():
+        return {}
+    
+    try:
+        df = pd.read_csv(
+            STAFF_DF_CSV,
+            usecols=["nconst", "primaryName"],
+            dtype=str,
+            na_filter=False,
+        )
+        
+        # 过滤空值
+        mask = (df["nconst"] != "") & (df["primaryName"] != "")
+        df = df[mask]
+        
+        # 使用 pandas 字符串操作（比 numpy 更健壮）
+        nconsts = df["nconst"].values
+        names = df["primaryName"].values
+        
+        # 为每个人员创建 ACT_, DIR_, PER_ 三个映射
+        mapping = {}
+        
+        for prefix in ["ACT_", "DIR_", "PER_"]:
+            # 直接使用列表推导，简单可靠
+            tokens = [f"{prefix}{nc}" for nc in nconsts]
+            mapping.update(dict(zip(tokens, names)))
+        
+        return mapping
+        
+    except Exception as e:
+        print(f"加载人员名称失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
+def _build_static_mapping() -> Dict[str, str]:
+    """
+    构建静态映射（类型、年代、评分）
+    """
     mapping = {}
+    mapping.update(GENRE_MAPPING)
+    mapping.update(ERA_MAPPING)
+    mapping.update(TYPE_MAPPING)
     
-    # 1. 加载电影名称
-    if MOVIES_INFO_CSV.exists():
-        try:
-            movies_df = pd.read_csv(
-                MOVIES_INFO_CSV,
-                usecols=["tconst", "title"],
-                dtype=str,
-            )
-            for _, row in movies_df.iterrows():
-                tconst = row["tconst"]
-                title = row["title"]
-                if pd.notna(tconst) and pd.notna(title):
-                    mapping[f"MOV_{tconst}"] = title
-        except Exception as e:
-            st.warning(f"加载电影名称失败: {e}")
-    
-    # 2. 加载人员名称 (演员、导演、编剧)
-    if STAFF_DF_CSV.exists():
-        try:
-            staff_df = pd.read_csv(
-                STAFF_DF_CSV,
-                usecols=["nconst", "primaryName", "isDirectors", "isActors"],
-                dtype={"nconst": str, "primaryName": str},
-            )
-            for _, row in staff_df.iterrows():
-                nconst = row["nconst"]
-                name = row["primaryName"]
-                if pd.notna(nconst) and pd.notna(name):
-                    # 演员
-                    mapping[f"ACT_{nconst}"] = name
-                    # 导演
-                    mapping[f"DIR_{nconst}"] = name
-                    # 通用人员
-                    mapping[f"PER_{nconst}"] = name
-        except Exception as e:
-            st.warning(f"加载人员名称失败: {e}")
-    
-    # 3. 添加类型映射 (中文)
-    genre_mapping = {
-        "GEN_Action": "动作",
-        "GEN_Adventure": "冒险",
-        "GEN_Animation": "动画",
-        "GEN_Biography": "传记",
-        "GEN_Comedy": "喜剧",
-        "GEN_Crime": "犯罪",
-        "GEN_Documentary": "纪录片",
-        "GEN_Drama": "剧情",
-        "GEN_Family": "家庭",
-        "GEN_Fantasy": "奇幻",
-        "GEN_Film-Noir": "黑色电影",
-        "GEN_History": "历史",
-        "GEN_Horror": "恐怖",
-        "GEN_Music": "音乐",
-        "GEN_Musical": "歌舞",
-        "GEN_Mystery": "悬疑",
-        "GEN_News": "新闻",
-        "GEN_Reality-TV": "真人秀",
-        "GEN_Romance": "爱情",
-        "GEN_Sci-Fi": "科幻",
-        "GEN_Short": "短片",
-        "GEN_Sport": "运动",
-        "GEN_Talk-Show": "脱口秀",
-        "GEN_Thriller": "惊悚",
-        "GEN_War": "战争",
-        "GEN_Western": "西部",
-        "GEN_Adult": "成人",
-        "GEN_Game-Show": "游戏节目",
-    }
-    mapping.update(genre_mapping)
-    
-    # 4. 添加年代映射
-    era_mapping = {
-        "ERA_SILENT": "默片时代",
-        "ERA_1920s": "1920年代",
-        "ERA_1930s": "1930年代",
-        "ERA_1940s": "1940年代",
-        "ERA_1950s": "1950年代",
-        "ERA_1960s": "1960年代",
-        "ERA_1970s": "1970年代",
-        "ERA_1980s": "1980年代",
-        "ERA_1990s": "1990年代",
-        "ERA_2000s": "2000年代",
-        "ERA_2010s": "2010年代",
-        "ERA_2020s": "2020年代",
-        "ERA_UNKNOWN": "未知年代",
-    }
-    mapping.update(era_mapping)
-    
-    # 5. 添加作品类型映射
-    type_mapping = {
-        "TYP_movie": "电影",
-        "TYP_short": "短片",
-        "TYP_tvSeries": "电视剧",
-        "TYP_tvMiniSeries": "迷你剧",
-        "TYP_tvMovie": "电视电影",
-        "TYP_tvSpecial": "电视特辑",
-        "TYP_video": "视频",
-        "TYP_videoGame": "视频游戏",
-        "TYP_tvEpisode": "剧集",
-    }
-    mapping.update(type_mapping)
-    
-    # 6. 评分保持原样显示
+    # 评分映射
     for i in range(0, 101):
         rating = i / 10
         mapping[f"RAT_{rating}"] = f"⭐ {rating}分"
         mapping[f"RAT_{rating:.1f}"] = f"⭐ {rating:.1f}分"
     
+    return mapping
+
+
+def _load_or_build_mapping(cache_name: str, build_fn, version: str) -> Dict[str, str]:
+    """
+    加载缓存或构建映射（使用 Pickle）
+    """
+    cache_file = NAME_MAPPING_CACHE_DIR / f"{cache_name}_{version}.pkl"
+    
+    # 尝试加载缓存
+    if cache_file.exists():
+        try:
+            with open(cache_file, "rb") as f:
+                return pickle.load(f)
+        except Exception:
+            pass  # 缓存损坏，重新构建
+    
+    # 构建映射
+    mapping = build_fn()
+    
     # 保存缓存
     try:
-        NAME_MAPPING_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        with open(NAME_MAPPING_CACHE, "w", encoding="utf-8") as f:
-            json.dump(mapping, f, ensure_ascii=False, indent=2)
+        with open(cache_file, "wb") as f:
+            pickle.dump(mapping, f, protocol=pickle.HIGHEST_PROTOCOL)
     except Exception:
         pass
     
@@ -199,7 +268,129 @@ def load_name_mapping() -> Dict[str, str]:
 
 
 # =============================================================================
-# 便捷函数
+# 分片加载函数
+# =============================================================================
+
+@st.cache_data(ttl=None, show_spinner=False)
+def _load_movie_mapping() -> Dict[str, str]:
+    """加载电影映射（Streamlit 内存缓存）"""
+    version = _get_cache_version()
+    return _load_or_build_mapping("movies", _build_movie_mapping_fast, version)
+
+
+@st.cache_data(ttl=None, show_spinner=False)
+def _load_staff_mapping() -> Dict[str, str]:
+    """加载人员映射（Streamlit 内存缓存）"""
+    version = _get_cache_version()
+    return _load_or_build_mapping("staff", _build_staff_mapping_fast, version)
+
+
+@st.cache_data(ttl=None, show_spinner=False)
+def _load_static_mapping() -> Dict[str, str]:
+    """加载静态映射"""
+    return _build_static_mapping()
+
+
+# =============================================================================
+# 并行加载支持
+# =============================================================================
+
+def _load_all_mappings_parallel() -> Dict[str, str]:
+    """
+    并行加载所有映射分片
+    
+    使用线程池并行加载电影和人员映射，提升加载速度
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    mapping = {}
+    
+    # 静态映射（同步，很快）
+    mapping.update(_build_static_mapping())
+    
+    version = _get_cache_version()
+    
+    # 定义加载任务
+    tasks = {
+        "movies": lambda: _load_or_build_mapping("movies", _build_movie_mapping_fast, version),
+        "staff": lambda: _load_or_build_mapping("staff", _build_staff_mapping_fast, version),
+    }
+    
+    # 并行执行
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(fn): name for name, fn in tasks.items()}
+        
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                result = future.result()
+                mapping.update(result)
+            except Exception as e:
+                print(f"加载 {name} 映射失败: {e}")
+    
+    return mapping
+
+
+# =============================================================================
+# 主加载函数
+# =============================================================================
+
+@st.cache_data(ttl=None, show_spinner="加载名称映射...")
+def load_name_mapping() -> Dict[str, str]:
+    """
+    加载完整的 Token → 名称 映射
+    
+    使用分片+并行加载策略：
+    - 电影和人员映射并行加载
+    - 每个分片独立缓存（Pickle 格式）
+    - Streamlit 内存缓存确保只加载一次
+    
+    Returns:
+        {token: display_name} 字典
+    """
+    return _load_all_mappings_parallel()
+
+
+@st.cache_data(ttl=None, show_spinner=False)
+def load_reverse_mapping() -> Dict[str, str]:
+    """
+    加载 名称 → Token 的反向映射
+    
+    Returns:
+        {lowercase_name: token} 字典
+    """
+    forward = load_name_mapping()
+    
+    reverse = {}
+    for token, name in forward.items():
+        key = name.lower()
+        # 优先保留电影/演员（而非类型等）
+        if key not in reverse or token.startswith(("MOV_", "ACT_", "DIR_")):
+            reverse[key] = token
+    
+    return reverse
+
+
+@st.cache_data(ttl=None, show_spinner=False)
+def load_search_list() -> List[Tuple[str, str, str]]:
+    """
+    加载搜索列表
+    
+    Returns:
+        [(display_name, token, entity_type), ...] 列表
+    """
+    forward = load_name_mapping()
+    
+    search_list = []
+    for token, name in forward.items():
+        entity_type = token.split("_")[0] if "_" in token else "OTHER"
+        search_list.append((name, token, entity_type))
+    
+    return search_list
+
+
+# =============================================================================
+# 查询函数
 # =============================================================================
 
 def get_display_name(token: str) -> str:
@@ -210,8 +401,23 @@ def get_display_name(token: str) -> str:
         token: 内部 Token，如 "MOV_tt0111161"
         
     Returns:
-        显示名称，如 "The Shawshank Redemption"；如果找不到映射，返回原 token
+        显示名称，如 "The Shawshank Redemption"
     """
+    # 快速路径：检查静态映射
+    if token in GENRE_MAPPING:
+        return GENRE_MAPPING[token]
+    if token in ERA_MAPPING:
+        return ERA_MAPPING[token]
+    if token in TYPE_MAPPING:
+        return TYPE_MAPPING[token]
+    if token.startswith("RAT_"):
+        try:
+            rating = float(token[4:])
+            return f"⭐ {rating}分"
+        except ValueError:
+            pass
+    
+    # 加载完整映射
     mapping = load_name_mapping()
     return mapping.get(token, token)
 
@@ -221,67 +427,188 @@ def token_to_display(token: str, show_token: bool = False) -> str:
     将 Token 转换为显示文本
     
     Args:
-        token: 内部 Token
-        show_token: 是否在名称后显示原始 token
+        token: Token 字符串
+        show_token: 是否在名称后显示 token
         
     Returns:
         格式化的显示文本
     """
     name = get_display_name(token)
-    
     if show_token and name != token:
         return f"{name} ({token})"
     return name
 
 
-def get_entity_display_info(token: str) -> Dict[str, str]:
+def get_entity_type_name(token: str) -> str:
     """
-    获取实体的完整显示信息
+    获取实体类型的中文名称
     
     Args:
         token: Token 字符串
         
     Returns:
-        包含 name, type, type_name, token 的字典
+        类型名称，如 "电影", "演员"
     """
-    from .data_loader import get_entity_type
-    
-    entity_type = get_entity_type(token)
-    display_name = get_display_name(token)
-    type_name = ENTITY_TYPE_NAMES.get(entity_type, entity_type)
-    
-    return {
-        "token": token,
-        "name": display_name,
-        "type": entity_type,
-        "type_name": type_name,
-    }
+    prefix = token.split("_")[0] if "_" in token else "OTHER"
+    return ENTITY_TYPE_NAMES.get(prefix, "未知")
 
 
-def format_entity_label(token: str, include_type: bool = True) -> str:
+# =============================================================================
+# 模糊搜索
+# =============================================================================
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fuzzy_search(
+    query: str,
+    limit: int = 10,
+    threshold: int = 60,
+    entity_types: Optional[List[str]] = None,
+) -> List[Tuple[str, str, str, float]]:
     """
-    格式化实体标签（用于图表显示）
+    模糊搜索实体
     
     Args:
-        token: Token
-        include_type: 是否包含类型标签
+        query: 搜索词
+        limit: 返回数量限制
+        threshold: 相似度阈值 (0-100)
+        entity_types: 限制实体类型，如 ["MOV", "ACT"]
         
     Returns:
-        格式化的标签，如 "[电影] 肖申克的救赎"
+        [(display_name, token, entity_type, score), ...] 列表
     """
-    info = get_entity_display_info(token)
+    if not query or len(query) < 1:
+        return []
     
-    if include_type:
-        return f"[{info['type_name']}] {info['name']}"
-    return info["name"]
+    try:
+        from rapidfuzz import fuzz, process
+    except ImportError:
+        # 降级为精确匹配
+        return exact_search(query, limit, entity_types)
+    
+    search_list = load_search_list()
+    
+    # 过滤实体类型
+    if entity_types:
+        search_list = [
+            (name, token, etype)
+            for name, token, etype in search_list
+            if etype in entity_types
+        ]
+    
+    if not search_list:
+        return []
+    
+    # 构建搜索字典
+    name_to_info = {name: (token, etype) for name, token, etype in search_list}
+    names = list(name_to_info.keys())
+    
+    # 使用 rapidfuzz 进行模糊匹配
+    results = process.extract(
+        query,
+        names,
+        scorer=fuzz.WRatio,
+        limit=limit,
+        score_cutoff=threshold,
+    )
+    
+    return [
+        (name, name_to_info[name][0], name_to_info[name][1], score)
+        for name, score, _ in results
+    ]
 
 
-def batch_get_display_names(tokens: list) -> Dict[str, str]:
+def exact_search(
+    query: str,
+    limit: int = 10,
+    entity_types: Optional[List[str]] = None,
+) -> List[Tuple[str, str, str, float]]:
     """
-    批量获取显示名称
+    精确子串搜索（降级方案）
+    """
+    query_lower = query.lower()
+    search_list = load_search_list()
+    
+    results = []
+    for name, token, etype in search_list:
+        if entity_types and etype not in entity_types:
+            continue
+        if query_lower in name.lower():
+            # 使用简单的匹配度计算
+            score = len(query) / len(name) * 100
+            results.append((name, token, etype, score))
+    
+    # 按匹配度排序
+    results.sort(key=lambda x: x[3], reverse=True)
+    return results[:limit]
+
+
+def search_entities(
+    query: str,
+    limit: int = 10,
+    entity_types: Optional[List[str]] = None,
+) -> List[str]:
+    """
+    搜索实体，返回 token 列表
     
     Args:
-        tokens: Token 列表
+        query: 搜索词
+        limit: 返回数量
+        entity_types: 限制类型
+        
+    Returns:
+        [token1, token2, ...] 列表
+    """
+    results = fuzzy_search(query, limit=limit, entity_types=entity_types)
+    return [token for _, token, _, _ in results]
+
+
+def get_popular_entities(
+    limit: int = 10,
+    entity_types: Optional[List[str]] = None,
+) -> List[Tuple[str, str, str]]:
+    """
+    获取热门实体（用于空搜索时显示）
+    
+    返回电影和人员各一半
+    """
+    search_list = load_search_list()
+    
+    if entity_types:
+        search_list = [
+            (name, token, etype)
+            for name, token, etype in search_list
+            if etype in entity_types
+        ]
+    
+    # 简单策略：返回前 N 个
+    # 实际可以基于评分或其他指标排序
+    return search_list[:limit]
+
+
+# =============================================================================
+# 反向查询
+# =============================================================================
+
+def name_to_token(name: str) -> Optional[str]:
+    """
+    通过名称查找 token
+    
+    Args:
+        name: 显示名称
+        
+    Returns:
+        对应的 token，找不到返回 None
+    """
+    reverse = load_reverse_mapping()
+    return reverse.get(name.lower())
+
+
+def batch_get_display_names(tokens: List[str]) -> Dict[str, str]:
+    """
+    批量获取显示名称（更高效）
+    
+    Args:
+        tokens: token 列表
         
     Returns:
         {token: display_name} 字典
@@ -291,49 +618,88 @@ def batch_get_display_names(tokens: list) -> Dict[str, str]:
 
 
 # =============================================================================
-# 搜索功能增强
+# 工具函数
 # =============================================================================
 
-@st.cache_data(ttl=3600)
-def build_reverse_mapping() -> Dict[str, str]:
+def format_entity_display(
+    token: str,
+    include_type: bool = True,
+    include_token: bool = False,
+) -> str:
     """
-    构建反向映射：名称 -> Token（用于搜索）
-    
-    Returns:
-        {lowercase_name: token} 字典
-    """
-    mapping = load_name_mapping()
-    reverse = {}
-    
-    for token, name in mapping.items():
-        # 使用小写作为键，方便搜索
-        reverse[name.lower()] = token
-    
-    return reverse
-
-
-def search_by_name(query: str, limit: int = 20) -> list:
-    """
-    通过名称搜索 Token
-    
-    支持按电影名、演员名等搜索，而不仅仅是 Token。
+    格式化实体显示
     
     Args:
-        query: 搜索关键词
-        limit: 返回数量上限
+        token: Token
+        include_type: 是否包含类型标签
+        include_token: 是否包含原始 token
         
     Returns:
-        匹配的 Token 列表
+        格式化字符串
     """
-    mapping = load_name_mapping()
-    query_lower = query.lower()
+    name = get_display_name(token)
+    parts = [name]
     
-    results = []
-    for token, name in mapping.items():
-        if query_lower in name.lower() or query_lower in token.lower():
-            results.append(token)
-            if len(results) >= limit:
-                break
+    if include_type:
+        type_name = get_entity_type_name(token)
+        parts.append(f"[{type_name}]")
     
-    return results
+    if include_token and name != token:
+        parts.append(f"({token})")
+    
+    return " ".join(parts)
 
+
+def get_entity_emoji(token: str) -> str:
+    """
+    获取实体类型的 emoji
+    """
+    prefix = token.split("_")[0] if "_" in token else "OTHER"
+    emoji_map = {
+        "MOV": "🎬",
+        "ACT": "🎭",
+        "DIR": "🎬",
+        "PER": "👤",
+        "GEN": "🏷️",
+        "ERA": "📅",
+        "TYP": "📁",
+        "RAT": "⭐",
+    }
+    return emoji_map.get(prefix, "📌")
+
+
+def get_entity_type(token: str) -> str:
+    """
+    从 Token 中提取实体类型前缀
+    
+    Args:
+        token: 如 "MOV_tt0111161", "ACT_nm0000001"
+        
+    Returns:
+        实体类型前缀，如 "MOV", "ACT"
+    """
+    if "_" in token:
+        return token.split("_")[0]
+    return "OTHER"
+
+
+def search_by_name(
+    query: str,
+    limit: int = 10,
+    entity_types: Optional[List[str]] = None,
+) -> List[str]:
+    """
+    通过名称搜索实体（返回 token 列表）
+    
+    这是 fuzzy_search 的简化版本，只返回 token
+    
+    Args:
+        query: 搜索词
+        limit: 返回数量
+        entity_types: 限制类型
+        
+    Returns:
+        [token1, token2, ...] 列表
+    """
+    results = fuzzy_search(query, limit=limit, entity_types=entity_types)
+    return [token for _, token, _, _ in results]

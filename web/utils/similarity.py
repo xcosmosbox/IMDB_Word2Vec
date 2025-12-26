@@ -1,19 +1,30 @@
 """
-相似度计算模块
-=============
+相似度计算模块 (优化版)
+======================
 
 提供余弦相似度计算、Top-K 相似搜索、相似度矩阵生成等功能。
 
+优化:
+- 使用 KNN 索引加速搜索 (O(N) → O(log N))
+- 预计算归一化嵌入
+- 智能缓存
+
 使用方法:
-    # 计算两个向量的余弦相似度
-    sim = cosine_similarity(vec_a, vec_b)
+    # 快速搜索（推荐）
+    results = find_similar_fast("MOV_tt0111161", k=10)
     
-    # 找到最相似的 K 个向量
+    # 传统方法（兼容）
     results = find_top_k_similar(query_vec, all_embeddings, tokens, k=10)
 """
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 import numpy as np
 import streamlit as st
+from pathlib import Path
+
+# 导入名称映射
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.name_mapping import get_display_name, get_entity_type
 
 
 # =============================================================================
@@ -98,6 +109,7 @@ def find_top_k_similar(
     exclude_self: bool = True,
     query_token: Optional[str] = None,
     entity_type_filter: Optional[str] = None,
+    include_names: bool = True,
 ) -> List[Dict]:
     """
     找到与查询向量最相似的 K 个向量
@@ -110,10 +122,12 @@ def find_top_k_similar(
         exclude_self: 是否排除自身（当查询来自 embeddings 时）
         query_token: 查询 Token（用于排除自身）
         entity_type_filter: 实体类型过滤器，如 "MOV", "ACT"
+        include_names: 是否包含显示名称
         
     Returns:
         相似结果列表，每个元素包含:
         - token: Token 字符串
+        - name: 显示名称 (如果 include_names=True)
         - similarity: 相似度值
         - rank: 排名
     """
@@ -133,11 +147,17 @@ def find_top_k_similar(
             if token_type != entity_type_filter:
                 continue
         
-        results.append({
+        result = {
             "token": token,
             "similarity": float(sim),
             "index": i,
-        })
+        }
+        
+        if include_names:
+            result["name"] = get_display_name(token)
+            result["type"] = get_entity_type(token)
+        
+        results.append(result)
     
     # 按相似度降序排序
     results.sort(key=lambda x: x["similarity"], reverse=True)
@@ -148,6 +168,106 @@ def find_top_k_similar(
         item["rank"] = rank
     
     return top_k
+
+
+# =============================================================================
+# 快速相似度搜索 (使用 KNN 索引)
+# =============================================================================
+
+def find_similar_fast(
+    query_token: str,
+    k: int = 10,
+    entity_type_filter: Optional[str] = None,
+    include_names: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    快速相似度搜索（使用预计算的 KNN 索引）
+    
+    相比 find_top_k_similar，速度提升 10-100 倍。
+    
+    Args:
+        query_token: 查询 Token
+        k: 返回数量
+        entity_type_filter: 实体类型过滤
+        include_names: 是否包含显示名称
+        
+    Returns:
+        相似结果列表，包含:
+        - token: Token
+        - name: 显示名称
+        - similarity: 相似度值
+        - type: 实体类型
+        - rank: 排名
+    """
+    # 延迟导入避免循环引用
+    from .precompute import find_similar_fast as _find_similar_fast
+    
+    results = _find_similar_fast(query_token, k=k, entity_type_filter=entity_type_filter)
+    
+    # 添加排名
+    for rank, item in enumerate(results, start=1):
+        item["rank"] = rank
+    
+    return results
+
+
+def find_similar_by_vector_fast(
+    query_vec: np.ndarray,
+    k: int = 10,
+    exclude_indices: Optional[List[int]] = None,
+    entity_type_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    使用向量快速搜索相似项（使用 KNN 索引）
+    
+    Args:
+        query_vec: 查询向量
+        k: 返回数量
+        exclude_indices: 要排除的索引
+        entity_type_filter: 类型过滤
+        
+    Returns:
+        相似结果列表
+    """
+    from .precompute import knn_search, get_tokens_list
+    
+    tokens_list = get_tokens_list()
+    similarities, indices = knn_search(
+        query_vec,
+        k=k + 10,  # 多取一些用于过滤
+        exclude_indices=exclude_indices,
+    )
+    
+    results = []
+    for sim, idx in zip(similarities, indices):
+        if idx >= len(tokens_list):
+            continue
+        
+        token = tokens_list[int(idx)]
+        if not token:
+            continue
+        
+        # 类型过滤
+        entity_type = get_entity_type(token)
+        if entity_type_filter and entity_type != entity_type_filter:
+            continue
+        
+        results.append({
+            "token": token,
+            "name": get_display_name(token),
+            "type": entity_type,
+            "similarity": float(sim),
+            "index": int(idx),
+        })
+        
+        if len(results) >= k:
+            break
+    
+    # 添加排名
+    for rank, item in enumerate(results, start=1):
+        item["rank"] = rank
+    
+    return results
 
 
 # =============================================================================

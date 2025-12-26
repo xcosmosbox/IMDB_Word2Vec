@@ -1,0 +1,92 @@
+{
+  "normalized_embeddings": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\normalized_embeddings_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:18.622819"
+  },
+  "knn_index_k50": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\knn_index\\knn_index_k50_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:18.658850"
+  },
+  "tokens_list": {
+    "source_hash": "e5dc406773cad5b9",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\tokens_list_e5dc4067.pkl",
+    "created_at": "2025-12-26T12:02:18.686850"
+  },
+  "dim_reduction_PCA_2d_1000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_PCA_2d_1000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:18.704850"
+  },
+  "dim_reduction_PCA_2d_3000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_PCA_2d_3000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:18.723850"
+  },
+  "dim_reduction_PCA_2d_5000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_PCA_2d_5000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:18.740852"
+  },
+  "dim_reduction_PCA_3d_1000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_PCA_3d_1000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:18.756360"
+  },
+  "dim_reduction_PCA_3d_3000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_PCA_3d_3000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:18.772880"
+  },
+  "dim_reduction_PCA_3d_5000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_PCA_3d_5000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:18.789879"
+  },
+  "dim_reduction_UMAP_2d_1000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_UMAP_2d_1000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:33.376890"
+  },
+  "dim_reduction_UMAP_2d_3000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_UMAP_2d_3000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:40.375425"
+  },
+  "dim_reduction_UMAP_3d_1000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_UMAP_3d_1000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:41.811269"
+  },
+  "dim_reduction_UMAP_3d_3000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_UMAP_3d_3000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:48.867184"
+  },
+  "dim_reduction_t-SNE_2d_1000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_t-SNE_2d_1000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:51.409518"
+  },
+  "dim_reduction_t-SNE_2d_3000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_t-SNE_2d_3000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:55.387773"
+  },
+  "dim_reduction_t-SNE_3d_1000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_t-SNE_3d_1000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:02:57.890334"
+  },
+  "dim_reduction_t-SNE_3d_3000": {
+    "source_hash": "62efcaa153581118",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\dim_reduction\\dim_reduction_t-SNE_3d_3000_62efcaa1.pkl",
+    "created_at": "2025-12-26T12:03:06.124342"
+  },
+  "name_mapping": {
+    "source_hash": "eb575829b4afb70d",
+    "cache_path": "C:\\Users\\Administrator\\Desktop\\IMDB\\IMDB_Word2Vec\\web\\cache\\name_mapping\\name_mapping_eb575829.pkl",
+    "created_at": "2025-12-26T14:44:04.695425"
+  }
+}

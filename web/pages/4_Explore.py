@@ -1,8 +1,12 @@
 """
-嵌入探索页面 (Embedding Explore)
-===============================
+嵌入探索页面 (Embedding Explore) - 优化版
+=========================================
 
 探索嵌入空间的语义关系，支持向量算术运算。
+
+优化:
+- 完全名称化（用户不接触 Token）
+- 模糊搜索支持
 
 功能:
 - 向量算术: A - B + C 运算
@@ -26,13 +30,16 @@ from utils.data_loader import (
     load_embeddings_npy,
     load_token_to_id,
     load_id_to_token,
-    search_tokens,
     get_entity_type,
 )
-from utils.similarity import vector_arithmetic, find_top_k_similar
+from utils.name_mapping import (
+    get_display_name,
+    fuzzy_search,
+    get_entity_display_info,
+)
+from utils.similarity import vector_arithmetic, find_similar_by_vector_fast
 from utils.visualization import create_vector_heatmap
 from components.sidebar import render_page_header
-from components.similarity_list import render_similarity_list
 
 
 # =============================================================================
@@ -73,10 +80,15 @@ def load_data():
 embeddings, token_to_id, id_to_token = load_data()
 
 # 构建 token 列表
-tokens_list = [""] * len(embeddings)
-for token, idx in token_to_id.items():
-    if idx < len(tokens_list):
-        tokens_list[idx] = token
+@st.cache_data
+def build_tokens_list():
+    tokens_list = [""] * len(embeddings)
+    for token, idx in token_to_id.items():
+        if idx < len(tokens_list):
+            tokens_list[idx] = token
+    return tokens_list
+
+tokens_list = build_tokens_list()
 
 
 # =============================================================================
@@ -92,12 +104,12 @@ with st.sidebar:
     向量算术可以揭示嵌入空间中的语义关系。
     
     **经典例子:**
-    - King - Man + Woman ≈ Queen
-    - Paris - France + Italy ≈ Rome
+    - 国王 - 男人 + 女人 ≈ 女王
+    - 巴黎 - 法国 + 意大利 ≈ 罗马
     
     **在 IMDB 数据中:**
-    - 动作片 - 动作 + 喜剧 ≈ 喜剧片
-    - 演员A - 电影A + 电影B ≈ 电影B的演员
+    - 动作 + 喜剧 ≈ 动作喜剧电影
+    - 演员A的电影 - 演员A + 演员B ≈ 演员B的电影
     """)
     
     st.markdown("---")
@@ -113,96 +125,125 @@ with st.sidebar:
 
 
 # =============================================================================
+# 解析名称输入
+# =============================================================================
+
+def parse_and_resolve_names(input_str: str) -> tuple:
+    """
+    解析用户输入的名称，返回 (tokens, not_found, found_info)
+    """
+    if not input_str:
+        return [], [], []
+    
+    names = [n.strip() for n in input_str.split(",") if n.strip()]
+    
+    tokens = []
+    not_found = []
+    found_info = []
+    
+    for name in names:
+        # 尝试模糊匹配
+        results = fuzzy_search(name, limit=1, threshold=70)
+        
+        if results:
+            tokens.append(results[0]["token"])
+            found_info.append(results[0])
+        else:
+            not_found.append(name)
+    
+    return tokens, not_found, found_info
+
+
+# =============================================================================
 # 向量算术界面
 # =============================================================================
 
 st.markdown("## ➕ 向量算术运算")
 
 st.markdown("""
-输入要进行运算的 Token，格式: **正向项 - 负向项**
+输入要进行运算的实体名称，用逗号分隔多个实体。
 
-结果向量 = Σ(正向项) - Σ(负向项)
+**结果向量 = Σ(正向项) - Σ(负向项)**
 """)
 
-# 检查是否有预设值要应用
-if "preset_positive" in st.session_state:
-    default_positive = st.session_state.pop("preset_positive")
-else:
-    default_positive = ""
-
-if "preset_negative" in st.session_state:
-    default_negative = st.session_state.pop("preset_negative")
-else:
-    default_negative = ""
+# 检查是否有预设值
+if "preset_positive" not in st.session_state:
+    st.session_state["preset_positive"] = ""
+if "preset_negative" not in st.session_state:
+    st.session_state["preset_negative"] = ""
 
 # 正向项
 st.markdown("### ➕ 正向项 (相加)")
 
 positive_input = st.text_input(
-    "输入正向 Token (用逗号分隔)",
-    value=default_positive,
-    placeholder="例如: MOV_tt0111161, GEN_Drama",
+    "输入实体名称 (用逗号分隔)",
+    value=st.session_state.get("preset_positive", ""),
+    placeholder="例如: 动作, 喜剧",
     key="positive_input",
 )
+
+# 解析正向输入
+positive_tokens, positive_not_found, positive_info = parse_and_resolve_names(positive_input)
 
 # 负向项
 st.markdown("### ➖ 负向项 (相减)")
 
 negative_input = st.text_input(
-    "输入负向 Token (用逗号分隔，可选)",
-    value=default_negative,
-    placeholder="例如: GEN_Action",
+    "输入实体名称 (用逗号分隔，可选)",
+    value=st.session_state.get("preset_negative", ""),
+    placeholder="例如: 恐怖",
     key="negative_input",
 )
 
-# 解析输入
-def parse_tokens(input_str):
-    """解析输入的 Token 字符串"""
-    if not input_str:
-        return []
-    tokens = [t.strip() for t in input_str.split(",")]
-    return [t for t in tokens if t]
-
-positive_tokens = parse_tokens(positive_input)
-negative_tokens = parse_tokens(negative_input)
-
-# 验证 Token
-valid_positive = [t for t in positive_tokens if t in token_to_id]
-valid_negative = [t for t in negative_tokens if t in token_to_id]
-
-invalid_tokens = [t for t in positive_tokens + negative_tokens if t not in token_to_id]
-
-if invalid_tokens:
-    st.warning(f"以下 Token 未找到: {', '.join(invalid_tokens)}")
+# 解析负向输入
+negative_tokens, negative_not_found, negative_info = parse_and_resolve_names(negative_input)
 
 # 显示解析结果
-if valid_positive or valid_negative:
+if positive_info or negative_info or positive_not_found or negative_not_found:
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("**正向项:**")
-        for token in valid_positive:
-            entity_type = get_entity_type(token)
-            color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
-            st.markdown(f'<span style="color:{color}">●</span> `{token}`', unsafe_allow_html=True)
-        if not valid_positive:
+        if positive_info:
+            for info in positive_info:
+                color = ENTITY_TYPE_COLORS.get(info["type"], "#888")
+                st.markdown(
+                    f'<span style="color:{color}">●</span> {info["name"]} [{info["type_name"]}]',
+                    unsafe_allow_html=True,
+                )
+        else:
             st.caption("(无)")
+        
+        if positive_not_found:
+            for name in positive_not_found:
+                st.markdown(f'<span style="color:red">✗</span> {name} (未找到)', unsafe_allow_html=True)
+                # 尝试提供建议
+                similar = fuzzy_search(name, limit=2, threshold=40)
+                if similar:
+                    st.caption(f"  → 您是否要找: {', '.join([s['name'] for s in similar])}？")
     
     with col2:
         st.markdown("**负向项:**")
-        for token in valid_negative:
-            entity_type = get_entity_type(token)
-            color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
-            st.markdown(f'<span style="color:{color}">●</span> `{token}`', unsafe_allow_html=True)
-        if not valid_negative:
+        if negative_info:
+            for info in negative_info:
+                color = ENTITY_TYPE_COLORS.get(info["type"], "#888")
+                st.markdown(
+                    f'<span style="color:{color}">●</span> {info["name"]} [{info["type_name"]}]',
+                    unsafe_allow_html=True,
+                )
+        else:
             st.caption("(无)")
+        
+        if negative_not_found:
+            for name in negative_not_found:
+                st.markdown(f'<span style="color:red">✗</span> {name} (未找到)', unsafe_allow_html=True)
 
 
 # =============================================================================
 # 计算结果
 # =============================================================================
 
-if st.button("🧮 计算", use_container_width=True) and valid_positive:
+if st.button("🧮 计算", use_container_width=True) and positive_tokens:
     st.markdown("---")
     st.markdown("## 📊 计算结果")
     
@@ -211,8 +252,8 @@ if st.button("🧮 计算", use_container_width=True) and valid_positive:
         embeddings=embeddings,
         tokens=tokens_list,
         token_to_id=token_to_id,
-        positive=valid_positive,
-        negative=valid_negative,
+        positive=positive_tokens,
+        negative=negative_tokens,
     )
     
     col1, col2 = st.columns([1, 2])
@@ -237,15 +278,31 @@ if st.button("🧮 计算", use_container_width=True) and valid_positive:
     with col2:
         st.markdown("### 最相似的实体")
         
-        # 显示结果
-        render_similarity_list(
-            results=similar_results[:result_count],
-            title="",
-            show_rank=True,
-        )
+        # 显示结果（使用名称）
+        for i, item in enumerate(similar_results[:result_count]):
+            name = get_display_name(item["token"])
+            entity_type = get_entity_type(item["token"])
+            color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
+            type_name = ENTITY_TYPE_NAMES.get(entity_type, entity_type)
+            
+            sim_pct = item["similarity"] * 100
+            
+            col_a, col_b, col_c = st.columns([3, 1, 1])
+            with col_a:
+                st.markdown(
+                    f'{i+1}. <span style="color:{color}">●</span> **{name}**',
+                    unsafe_allow_html=True,
+                )
+            with col_b:
+                st.caption(type_name)
+            with col_c:
+                st.caption(f"{sim_pct:.1f}%")
 
-elif not valid_positive and (positive_input or negative_input):
-    st.info("请输入至少一个有效的正向 Token")
+elif not positive_tokens and (positive_input or negative_input):
+    if positive_not_found and not positive_info:
+        st.info("请输入有效的实体名称")
+    elif not positive_input:
+        st.info("请输入至少一个正向实体")
 
 
 # =============================================================================
@@ -262,74 +319,76 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.markdown("**类型探索**")
     if st.button("动作 + 喜剧", key="example1"):
-        st.session_state["preset_positive"] = "GEN_Action, GEN_Comedy"
+        st.session_state["preset_positive"] = "动作, 喜剧"
         st.session_state["preset_negative"] = ""
         st.rerun()
     
     if st.button("恐怖 - 惊悚", key="example2"):
-        st.session_state["preset_positive"] = "GEN_Horror"
-        st.session_state["preset_negative"] = "GEN_Thriller"
+        st.session_state["preset_positive"] = "恐怖"
+        st.session_state["preset_negative"] = "惊悚"
         st.rerun()
 
 with col2:
     st.markdown("**年代探索**")
-    if st.button("90年代 + 动作", key="example3"):
-        st.session_state["preset_positive"] = "ERA_1990s, GEN_Action"
+    if st.button("1990年代 + 动作", key="example3"):
+        st.session_state["preset_positive"] = "1990年代, 动作"
         st.session_state["preset_negative"] = ""
         st.rerun()
     
-    if st.button("2020s - 2010s", key="example4"):
-        st.session_state["preset_positive"] = "ERA_2020s"
-        st.session_state["preset_negative"] = "ERA_2010s"
+    if st.button("2020年代 - 2010年代", key="example4"):
+        st.session_state["preset_positive"] = "2020年代"
+        st.session_state["preset_negative"] = "2010年代"
         st.rerun()
 
 with col3:
-    st.markdown("**评分探索**")
-    if st.button("高分 (8.5+)", key="example5"):
-        st.session_state["preset_positive"] = "RAT_8.5, RAT_9.0"
+    st.markdown("**类型组合**")
+    if st.button("科幻 + 爱情", key="example5"):
+        st.session_state["preset_positive"] = "科幻, 爱情"
         st.session_state["preset_negative"] = ""
         st.rerun()
     
-    if st.button("高分 - 低分", key="example6"):
-        st.session_state["preset_positive"] = "RAT_9.0"
-        st.session_state["preset_negative"] = "RAT_5.0"
+    if st.button("剧情 - 喜剧", key="example6"):
+        st.session_state["preset_positive"] = "剧情"
+        st.session_state["preset_negative"] = "喜剧"
         st.rerun()
 
 
 # =============================================================================
-# Token 搜索辅助
+# 实体搜索辅助
 # =============================================================================
 
 st.markdown("---")
-st.markdown("## 🔍 Token 搜索")
+st.markdown("## 🔍 实体搜索")
 
 search_query = st.text_input(
-    "搜索 Token",
-    placeholder="输入关键词搜索可用的 Token...",
+    "搜索实体",
+    placeholder="输入电影名、演员名、类型等...",
     key="explore_search",
 )
 
 if search_query and len(search_query) >= 2:
-    matches = search_tokens(search_query, limit=20)
+    matches = fuzzy_search(search_query, limit=20)
     
     if matches:
         st.markdown(f"**找到 {len(matches)} 个匹配:**")
         
         # 分类显示
         type_groups = {}
-        for token in matches:
-            entity_type = get_entity_type(token)
+        for result in matches:
+            entity_type = result["type"]
             if entity_type not in type_groups:
                 type_groups[entity_type] = []
-            type_groups[entity_type].append(token)
+            type_groups[entity_type].append(result)
         
-        for entity_type, tokens in type_groups.items():
+        for entity_type, results in type_groups.items():
             name = ENTITY_TYPE_NAMES.get(entity_type, entity_type)
             color = ENTITY_TYPE_COLORS.get(entity_type, "#888")
             
-            with st.expander(f"{name} ({len(tokens)} 个)", expanded=True):
-                for token in tokens:
-                    st.code(token, language=None)
+            with st.expander(f"{name} ({len(results)} 个)", expanded=True):
+                for result in results:
+                    st.markdown(
+                        f'<span style="color:{color}">●</span> {result["name"]}',
+                        unsafe_allow_html=True,
+                    )
     else:
-        st.info("未找到匹配的 Token")
-
+        st.info("未找到匹配的实体")
