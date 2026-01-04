@@ -5,23 +5,50 @@
 
 ---
 
-## ⚠️ 重要：类型驱动开发
+## ⚠️ 重要：接口驱动开发
 
-**开始编码前，必须先阅读类型定义文件：**
+**开始编码前，必须先阅读以下文件：**
 
+1. **数据类型定义：**
 ```
 frontend/shared/types/index.ts
 ```
 
-你需要使用的核心类型：
+2. **服务接口定义（核心）：**
+```
+frontend/shared/api/interfaces.ts
+```
+
+你需要使用的核心接口：
 
 ```typescript
-interface User { id, name, email, age, gender, ... }
-interface LoginRequest { email, password }
-interface LoginResponse { token, user, expires_at }
-interface RegisterRequest { name, email, password, ... }
-interface UserBehavior { user_id, item_id, action, timestamp, ... }
-interface UserProfile { user, total_actions, preferred_types, ... }
+// 认证服务接口
+interface IAuthService {
+  login(credentials: LoginRequest): Promise<LoginResponse>
+  register(data: RegisterRequest): Promise<void>
+  logout(): Promise<void>
+  getCurrentUser(): Promise<User>
+}
+
+// 用户服务接口
+interface IUserService {
+  getUser(userId: string): Promise<User>
+  updateUser(userId: string, data: UpdateUserRequest): Promise<User>
+  getProfile(userId: string): Promise<UserProfile>
+  getBehaviors(userId: string, limit?: number): Promise<UserBehavior[]>
+}
+```
+
+**⚠️ 不要直接导入具体实现！** 使用依赖注入：
+
+```typescript
+// ✅ 正确：通过 inject 获取接口
+const api = inject<IApiProvider>('api')!
+await api.auth.login({ email, password })
+const profile = await api.user.getProfile(userId)
+
+// ❌ 错误：直接导入具体实现
+import { userApi } from '@shared/api'
 ```
 
 ---

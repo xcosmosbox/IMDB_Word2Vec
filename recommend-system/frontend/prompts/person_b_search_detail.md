@@ -5,20 +5,47 @@
 
 ---
 
-## ⚠️ 重要：类型驱动开发
+## ⚠️ 重要：接口驱动开发
 
-**开始编码前，必须先阅读类型定义文件：**
+**开始编码前，必须先阅读以下文件：**
 
+1. **数据类型定义：**
 ```
 frontend/shared/types/index.ts
 ```
 
-你需要使用的核心类型：
+2. **服务接口定义（核心）：**
+```
+frontend/shared/api/interfaces.ts
+```
+
+你需要使用的核心接口：
 
 ```typescript
-interface Item { id, type, title, description, category, tags, ... }
-interface SimilarItem { item, score }
-interface ItemStats { view_count, click_count, like_count, ... }
+// 物品服务接口
+interface IItemService {
+  getItem(itemId: string): Promise<Item>
+  searchItems(query: string, limit?: number): Promise<Item[]>
+  getItemStats(itemId: string): Promise<ItemStats>
+  getSimilarItems(itemId: string, limit?: number): Promise<SimilarItem[]>
+}
+
+// 推荐服务接口
+interface IRecommendService {
+  submitFeedback(feedback: FeedbackRequest): Promise<void>
+}
+```
+
+**⚠️ 不要直接导入具体实现！** 使用依赖注入：
+
+```typescript
+// ✅ 正确：通过 inject 获取接口
+const api = inject<IApiProvider>('api')!
+const item = await api.item.getItem(itemId)
+const similar = await api.item.getSimilarItems(itemId, 10)
+
+// ❌ 错误：直接导入具体实现
+import { itemApi } from '@shared/api'
 ```
 
 ---

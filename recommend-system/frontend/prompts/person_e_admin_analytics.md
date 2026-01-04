@@ -5,15 +5,35 @@
 
 ---
 
-## ⚠️ 重要：类型驱动开发
+## ⚠️ 重要：接口驱动开发
 
-**开始编码前，必须先阅读类型定义文件：**
+**开始编码前，必须先阅读以下文件：**
 
+1. **数据类型定义：**
 ```
 frontend/shared/types/index.ts
 ```
 
-你需要使用的核心类型：
+2. **服务接口定义（核心）：**
+```
+frontend/shared/api/interfaces.ts
+```
+
+你需要使用的核心接口：
+
+```typescript
+// 分析服务接口
+interface IAnalyticsService {
+  getDashboardStats(): Promise<DashboardStats>
+  getUserTrend(days: number): Promise<TimeSeriesPoint[]>
+  getItemTypeStats(): Promise<CategoryStats[]>
+  getRecommendationTrend(days: number): Promise<TimeSeriesPoint[]>
+  getTopCategories(limit: number): Promise<CategoryStats[]>
+  getCTRTrend(startDate: string, endDate: string): Promise<TimeSeriesPoint[]>
+}
+```
+
+相关数据类型：
 
 ```typescript
 interface DashboardStats {
@@ -25,16 +45,20 @@ interface DashboardStats {
   avg_response_time: number;
 }
 
-interface TimeSeriesPoint {
-  timestamp: string;
-  value: number;
-}
+interface TimeSeriesPoint { timestamp: string; value: number; }
+interface CategoryStats { category: string; count: number; percentage: number; }
+```
 
-interface CategoryStats {
-  category: string;
-  count: number;
-  percentage: number;
-}
+**⚠️ 不要直接导入具体实现！** 使用依赖注入：
+
+```typescript
+// ✅ 正确：通过 inject 获取接口
+const api = inject<IApiProvider>('api')!
+const stats = await api.analytics.getDashboardStats()
+const trend = await api.analytics.getUserTrend(30)
+
+// ❌ 错误：直接导入具体实现
+import { analyticsApi } from '@/api/admin/analytics'
 ```
 
 ---

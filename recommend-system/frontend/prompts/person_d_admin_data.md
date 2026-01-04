@@ -5,23 +5,52 @@
 
 ---
 
-## ⚠️ 重要：类型驱动开发
+## ⚠️ 重要：接口驱动开发
 
-**开始编码前，必须先阅读类型定义文件：**
+**开始编码前，必须先阅读以下文件：**
 
+1. **数据类型定义：**
 ```
 frontend/shared/types/index.ts
 ```
 
-你需要使用的核心类型：
+2. **服务接口定义（核心）：**
+```
+frontend/shared/api/interfaces.ts
+```
+
+你需要使用的核心接口：
 
 ```typescript
-interface User { id, name, email, age, gender, ... }
-interface Item { id, type, title, description, category, tags, ... }
-interface CreateUserRequest { name, email, ... }
-interface CreateItemRequest { type, title, description, ... }
-interface ListItemsRequest { type, category, page, page_size }
-interface PaginatedResponse<T> { items, total, page, page_size }
+// 管理员用户服务接口
+interface IAdminUserService {
+  listUsers(params: { page, page_size, keyword?, gender? }): Promise<{ items: User[]; total: number }>
+  getUser(userId: string): Promise<User>
+  createUser(data: CreateUserRequest): Promise<User>
+  updateUser(userId: string, data: UpdateUserRequest): Promise<User>
+  deleteUser(userId: string): Promise<void>
+}
+
+// 管理员物品服务接口
+interface IAdminItemService {
+  listItems(params: { page, page_size, type?, keyword? }): Promise<{ items: Item[]; total: number }>
+  getItem(itemId: string): Promise<Item>
+  createItem(data: CreateItemRequest): Promise<Item>
+  updateItem(itemId: string, data: UpdateItemRequest): Promise<Item>
+  deleteItem(itemId: string): Promise<void>
+}
+```
+
+**⚠️ 不要直接导入具体实现！** 使用依赖注入：
+
+```typescript
+// ✅ 正确：通过 inject 获取接口
+const api = inject<IApiProvider>('api')!
+const { items, total } = await api.adminUser.listUsers({ page: 1, page_size: 10 })
+await api.adminItem.createItem(data)
+
+// ❌ 错误：直接导入具体实现
+import { adminUserApi, adminItemApi } from '@/api/admin'
 ```
 
 ---

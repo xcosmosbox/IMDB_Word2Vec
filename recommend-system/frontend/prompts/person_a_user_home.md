@@ -5,21 +5,44 @@
 
 ---
 
-## ⚠️ 重要：类型驱动开发
+## ⚠️ 重要：接口驱动开发
 
-**开始编码前，必须先阅读类型定义文件：**
+**开始编码前，必须先阅读以下文件：**
 
+1. **数据类型定义：**
 ```
 frontend/shared/types/index.ts
 ```
 
-你需要使用的核心类型：
+2. **服务接口定义（核心）：**
+```
+frontend/shared/api/interfaces.ts
+```
+
+你需要使用的核心接口：
 
 ```typescript
-interface Item { id, type, title, description, category, tags, ... }
-interface Recommendation { item_id, score, reason, item }
-interface RecommendRequest { user_id, limit, scene, ... }
-interface RecommendResponse { recommendations, request_id, strategy }
+// 推荐服务接口
+interface IRecommendService {
+  getRecommendations(request: RecommendRequest): Promise<RecommendResponse>
+  submitFeedback(feedback: FeedbackRequest): Promise<void>
+}
+
+// 用户服务接口
+interface IUserService {
+  recordBehavior(data: RecordBehaviorRequest): Promise<void>
+}
+```
+
+**⚠️ 不要直接导入具体实现！** 使用依赖注入：
+
+```typescript
+// ✅ 正确：通过 inject 获取接口
+const api = inject<IApiProvider>('api')!
+await api.recommend.getRecommendations(request)
+
+// ❌ 错误：直接导入具体实现
+import { recommendApi } from '@shared/api'
 ```
 
 ---
