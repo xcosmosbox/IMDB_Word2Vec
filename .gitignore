@@ -9997,3 +9997,8 @@ imdb_venv/lib/python3.12/site-packages/pyarrow-17.0.0.dist-info/REQUESTED
 imdb_venv/lib/python3.12/site-packages/pyarrow-17.0.0.dist-info/top_level.txt
 imdb_venv/lib/python3.12/site-packages/pyarrow-17.0.0.dist-info/WHEEL
 .cursor/plans/streamlit可视化看板_e6e8bf56.plan.md
+
+# Large cache files - keep local only
+web/cache/name_mapping.json
+web/cache/name_mapping/*.pkl
+web/cache/*.pkl
