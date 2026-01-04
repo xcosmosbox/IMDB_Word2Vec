@@ -1,0 +1,108 @@
+# 生成式推荐系统配置文件
+# 环境变量可覆盖：RECOMMEND_SERVER_HTTP_PORT=8081
+
+server:
+  name: recommend-service
+  http_port: 8080
+  grpc_port: 9090
+  metrics_port: 9091
+  read_timeout: 30s
+  write_timeout: 30s
+  shutdown_timeout: 10s
+  mode: release  # debug, release, test
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: ${DB_PASSWORD}
+  dbname: recommend
+  sslmode: disable
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: 1h
+  conn_max_idle_time: 10m
+
+redis:
+  addrs:
+    - localhost:6379
+  password: ${REDIS_PASSWORD}
+  db: 0
+  pool_size: 100
+  min_idle_conns: 10
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+  cluster_mode: false
+
+milvus:
+  address: localhost
+  port: 19530
+  user: ""
+  password: ""
+  database: default
+  collection: item_embeddings
+
+kafka:
+  brokers:
+    - localhost:9092
+  consumer_group: recommend-service
+  topics:
+    user_events: user-events
+    recommendation_log: recommend-log
+    item_updates: item-updates
+
+inference:
+  triton_url: http://localhost:8001
+  model_name: ugt_model
+  model_version: "1"
+  timeout: 100ms
+  max_batch_size: 64
+  enable_fallback: true
+  fallback_timeout: 50ms
+
+llm:
+  provider: openai  # openai, anthropic, local
+  api_key: ${OPENAI_API_KEY}
+  api_base: https://api.openai.com/v1
+  model: gpt-4
+  max_tokens: 1024
+  temperature: 0.7
+  timeout: 30s
+  max_retries: 3
+
+log:
+  level: info  # debug, info, warn, error
+  format: json  # json, console
+  output: stdout  # stdout, file
+  filename: logs/recommend.log
+  max_size: 100  # MB
+  max_backups: 3
+  max_age: 7  # days
+  compress: true
+
+metrics:
+  enabled: true
+  path: /metrics
+
+tracing:
+  enabled: true
+  service_name: recommend-service
+  endpoint: http://localhost:14268/api/traces
+  sample_rate: 0.1
+
+# 推荐配置
+recommend:
+  # 默认返回数量
+  default_size: 20
+  # 最大返回数量
+  max_size: 100
+  # 候选集大小
+  candidate_size: 500
+  # 曝光过滤时间（小时）
+  exposure_filter_hours: 24
+  # 冷启动阈值（行为数）
+  cold_start_threshold: 10
+  # 模型版本
+  model_version: "v1.0.0"
+
