@@ -1,0 +1,10 @@
+# Triton 模型仓库目录
+# 此目录用于存放 Triton Inference Server 的模型文件
+# 
+# 目录结构示例：
+# model_repository/
+# └── ugt_recommend/
+#     ├── config.pbtxt
+#     └── 1/
+#         └── model.plan
+
