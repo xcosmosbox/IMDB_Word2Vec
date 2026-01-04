@@ -1,0 +1,45 @@
+# 生成式推荐系统 - 算法模块依赖
+
+# 深度学习框架
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Transformer 相关
+transformers>=4.30.0
+
+# 数据处理
+numpy>=1.24.0
+pandas>=2.0.0
+pyarrow>=12.0.0  # Parquet 支持
+
+# 大规模处理
+pyspark>=3.4.0
+
+# 模型导出和推理
+onnx>=1.14.0
+onnxruntime>=1.15.0
+onnxruntime-gpu>=1.15.0  # GPU 版本
+
+# TensorRT (需要单独安装)
+# tensorrt>=8.6.0
+
+# Triton 客户端
+tritonclient[all]>=2.34.0
+
+# 训练加速
+deepspeed>=0.10.0
+accelerate>=0.21.0
+
+# 监控和日志
+tensorboard>=2.13.0
+wandb>=0.15.0
+tqdm>=4.65.0
+
+# 测试
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# 工具
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
