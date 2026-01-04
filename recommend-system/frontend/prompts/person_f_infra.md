@@ -5,13 +5,38 @@
 
 ---
 
-## ⚠️ 重要：类型驱动开发
+## ⚠️ 重要：接口驱动开发
 
-**开始编码前，必须先阅读类型定义文件：**
+**开始编码前，必须先阅读以下文件：**
 
+1. **数据类型定义：**
 ```
 frontend/shared/types/index.ts
 ```
+
+2. **服务接口定义（核心）：**
+```
+frontend/shared/api/interfaces.ts
+```
+
+你需要实现的核心接口：
+
+```typescript
+// API Provider - 所有服务的统一入口
+interface IApiProvider {
+  readonly auth: IAuthService
+  readonly user: IUserService
+  readonly item: IItemService
+  readonly recommend: IRecommendService
+  readonly analytics: IAnalyticsService
+  readonly adminUser: IAdminUserService
+  readonly adminItem: IAdminItemService
+}
+```
+
+**你需要提供两种实现：**
+1. `HttpApiProvider` - 生产环境，调用真实 API
+2. `MockApiProvider` - 开发/测试环境，返回模拟数据
 
 你需要实现：
 1. **Axios 封装** - 基于类型定义的请求响应

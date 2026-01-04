@@ -6,13 +6,23 @@
 
 ---
 
-## ⚠️ 重要：类型驱动开发
+## ⚠️ 重要：接口驱动开发
 
-所有开发者必须先阅读共享类型定义：
+所有开发者必须先阅读以下文件：
 
+### 1. 数据类型定义
 ```
 frontend/shared/types/index.ts
 ```
+定义了所有数据结构：`User`, `Item`, `Recommendation` 等。
+
+### 2. 服务接口定义（核心）
+```
+frontend/shared/api/interfaces.ts
+```
+定义了所有服务接口：`IUserService`, `IItemService`, `IRecommendService` 等。
+
+**这是可插拔设计的关键！** 所有 API 调用必须通过接口进行，而非直接依赖具体实现。
 
 ---
 
