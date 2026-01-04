@@ -1,0 +1,451 @@
+// item.proto - 物品服务 gRPC 接口定义
+// 
+// 该文件定义了物品管理相关的 gRPC 服务接口，与 interfaces.go 中的
+// ItemService 接口保持对应关系。
+//
+// 对应接口：
+//   - ItemService.GetItem -> ItemService.GetItem
+//   - ItemService.CreateItem -> ItemService.CreateItem
+//   - ItemService.UpdateItem -> ItemService.UpdateItem
+//   - ItemService.DeleteItem -> ItemService.DeleteItem
+//   - ItemService.ListItems -> ItemService.ListItems
+//   - ItemService.SearchItems -> ItemService.SearchItems
+//   - ItemService.GetSimilarItems -> ItemService.GetSimilarItems
+//   - ItemService.BatchGetItems -> ItemService.BatchGetItems
+//   - ItemService.GetItemStats -> ItemService.GetItemStats
+
+syntax = "proto3";
+
+package item.v1;
+
+option go_package = "recommend-system/proto/item/v1;itemv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// =============================================================================
+// 物品服务定义
+// =============================================================================
+
+// ItemService 物品服务
+// 提供物品管理、搜索和统计等功能
+service ItemService {
+    // GetItem 获取物品信息
+    // 对应 interfaces.ItemService.GetItem
+    rpc GetItem(GetItemRequest) returns (GetItemResponse);
+    
+    // CreateItem 创建物品
+    // 对应 interfaces.ItemService.CreateItem
+    rpc CreateItem(CreateItemRequest) returns (CreateItemResponse);
+    
+    // UpdateItem 更新物品信息
+    // 对应 interfaces.ItemService.UpdateItem
+    rpc UpdateItem(UpdateItemRequest) returns (UpdateItemResponse);
+    
+    // DeleteItem 删除物品
+    // 对应 interfaces.ItemService.DeleteItem
+    rpc DeleteItem(DeleteItemRequest) returns (DeleteItemResponse);
+    
+    // BatchGetItems 批量获取物品
+    // 对应 interfaces.ItemService.BatchGetItems
+    rpc BatchGetItems(BatchGetItemsRequest) returns (BatchGetItemsResponse);
+    
+    // ListItems 列出物品
+    // 对应 interfaces.ItemService.ListItems
+    rpc ListItems(ListItemsRequest) returns (ListItemsResponse);
+    
+    // SearchItems 搜索物品
+    // 对应 interfaces.ItemService.SearchItems
+    rpc SearchItems(SearchItemsRequest) returns (SearchItemsResponse);
+    
+    // GetSimilarItems 获取相似物品（向量搜索）
+    // 对应 interfaces.ItemService.GetSimilarItems
+    rpc GetSimilarItems(GetSimilarItemsRequest) returns (GetSimilarItemsResponse);
+    
+    // GetItemStats 获取物品统计
+    // 对应 interfaces.ItemService.GetItemStats
+    rpc GetItemStats(GetItemStatsRequest) returns (GetItemStatsResponse);
+    
+    // BatchGetItemStats 批量获取物品统计
+    rpc BatchGetItemStats(BatchGetItemStatsRequest) returns (BatchGetItemStatsResponse);
+    
+    // UpdateItemEmbedding 更新物品向量
+    rpc UpdateItemEmbedding(UpdateItemEmbeddingRequest) returns (UpdateItemEmbeddingResponse);
+}
+
+// =============================================================================
+// 物品相关消息定义
+// =============================================================================
+
+// Item 物品信息
+// 对应 interfaces.Item
+message Item {
+    // id 物品ID
+    string id = 1;
+    
+    // type 物品类型: movie, product, article, video
+    string type = 2;
+    
+    // title 物品标题
+    string title = 3;
+    
+    // description 物品描述
+    string description = 4;
+    
+    // category 物品类目
+    string category = 5;
+    
+    // tags 物品标签
+    repeated string tags = 6;
+    
+    // metadata 物品元数据（JSON结构）
+    google.protobuf.Struct metadata = 7;
+    
+    // status 物品状态: active, inactive, deleted
+    string status = 8;
+    
+    // created_at 创建时间
+    google.protobuf.Timestamp created_at = 9;
+    
+    // updated_at 更新时间
+    google.protobuf.Timestamp updated_at = 10;
+    
+    // semantic_id 语义ID
+    SemanticID semantic_id = 11;
+}
+
+// SemanticID 语义ID
+// 三层层次化语义表示
+message SemanticID {
+    // l1 一级语义（粗粒度类目）
+    int32 l1 = 1;
+    
+    // l2 二级语义（细粒度属性）
+    int32 l2 = 2;
+    
+    // l3 三级语义（实例区分）
+    int32 l3 = 3;
+}
+
+// ItemStats 物品统计
+// 对应 interfaces.ItemStats
+message ItemStats {
+    // item_id 物品ID
+    string item_id = 1;
+    
+    // view_count 浏览次数
+    int64 view_count = 2;
+    
+    // click_count 点击次数
+    int64 click_count = 3;
+    
+    // like_count 点赞次数
+    int64 like_count = 4;
+    
+    // share_count 分享次数
+    int64 share_count = 5;
+    
+    // avg_rating 平均评分
+    double avg_rating = 6;
+    
+    // rating_count 评分次数
+    int64 rating_count = 7;
+    
+    // buy_count 购买次数
+    int64 buy_count = 8;
+    
+    // ctr 点击率
+    double ctr = 9;
+    
+    // cvr 转化率
+    double cvr = 10;
+}
+
+// SimilarItem 相似物品
+// 对应 interfaces.SimilarItem
+message SimilarItem {
+    // item 物品信息
+    Item item = 1;
+    
+    // score 相似度得分
+    float score = 2;
+    
+    // similarity_type 相似类型: content, collaborative, semantic
+    string similarity_type = 3;
+}
+
+// =============================================================================
+// 请求/响应消息定义
+// =============================================================================
+
+// GetItemRequest 获取物品请求
+message GetItemRequest {
+    // item_id 物品ID
+    string item_id = 1;
+    
+    // include_stats 是否包含统计信息
+    bool include_stats = 2;
+}
+
+// GetItemResponse 获取物品响应
+message GetItemResponse {
+    // item 物品信息
+    Item item = 1;
+    
+    // stats 物品统计（如果请求）
+    ItemStats stats = 2;
+}
+
+// CreateItemRequest 创建物品请求
+// 对应 interfaces.CreateItemRequest
+message CreateItemRequest {
+    // type 物品类型（必填）
+    string type = 1;
+    
+    // title 物品标题（必填）
+    string title = 2;
+    
+    // description 物品描述
+    string description = 3;
+    
+    // category 物品类目
+    string category = 4;
+    
+    // tags 物品标签
+    repeated string tags = 5;
+    
+    // metadata 物品元数据
+    google.protobuf.Struct metadata = 6;
+    
+    // embedding 物品向量（可选，用于相似度计算）
+    repeated float embedding = 7;
+}
+
+// CreateItemResponse 创建物品响应
+message CreateItemResponse {
+    // item 创建的物品信息
+    Item item = 1;
+}
+
+// UpdateItemRequest 更新物品请求
+// 对应 interfaces.UpdateItemRequest
+message UpdateItemRequest {
+    // item_id 物品ID（必填）
+    string item_id = 1;
+    
+    // title 物品标题
+    string title = 2;
+    
+    // description 物品描述
+    string description = 3;
+    
+    // category 物品类目
+    string category = 4;
+    
+    // tags 物品标签
+    repeated string tags = 5;
+    
+    // metadata 物品元数据
+    google.protobuf.Struct metadata = 6;
+    
+    // status 物品状态
+    string status = 7;
+    
+    // update_mask 更新字段掩码
+    repeated string update_mask = 8;
+}
+
+// UpdateItemResponse 更新物品响应
+message UpdateItemResponse {
+    // item 更新后的物品信息
+    Item item = 1;
+}
+
+// DeleteItemRequest 删除物品请求
+message DeleteItemRequest {
+    // item_id 物品ID
+    string item_id = 1;
+    
+    // hard_delete 是否硬删除（默认软删除）
+    bool hard_delete = 2;
+}
+
+// DeleteItemResponse 删除物品响应
+message DeleteItemResponse {
+    // success 是否成功
+    bool success = 1;
+    
+    // message 响应消息
+    string message = 2;
+}
+
+// BatchGetItemsRequest 批量获取物品请求
+message BatchGetItemsRequest {
+    // item_ids 物品ID列表
+    repeated string item_ids = 1;
+    
+    // include_stats 是否包含统计信息
+    bool include_stats = 2;
+}
+
+// BatchGetItemsResponse 批量获取物品响应
+message BatchGetItemsResponse {
+    // items 物品信息列表
+    repeated Item items = 1;
+    
+    // not_found_ids 未找到的物品ID列表
+    repeated string not_found_ids = 2;
+    
+    // stats 物品统计映射（item_id -> stats）
+    map<string, ItemStats> stats = 3;
+}
+
+// ListItemsRequest 列出物品请求
+// 对应 interfaces.ListItemsRequest
+message ListItemsRequest {
+    // type 物品类型过滤
+    string type = 1;
+    
+    // category 类目过滤
+    string category = 2;
+    
+    // status 状态过滤
+    string status = 3;
+    
+    // page 页码（1-based）
+    int32 page = 4;
+    
+    // page_size 每页数量
+    int32 page_size = 5;
+    
+    // sort_by 排序字段: created_at, updated_at, view_count
+    string sort_by = 6;
+    
+    // sort_order 排序方向: asc, desc
+    string sort_order = 7;
+}
+
+// ListItemsResponse 列出物品响应
+// 对应 interfaces.ListItemsResponse
+message ListItemsResponse {
+    // items 物品列表
+    repeated Item items = 1;
+    
+    // total 总数
+    int64 total = 2;
+    
+    // page 当前页码
+    int32 page = 3;
+    
+    // page_size 每页数量
+    int32 page_size = 4;
+    
+    // has_more 是否有更多
+    bool has_more = 5;
+}
+
+// SearchItemsRequest 搜索物品请求
+message SearchItemsRequest {
+    // query 搜索关键词
+    string query = 1;
+    
+    // limit 返回数量限制
+    int32 limit = 2;
+    
+    // type 物品类型过滤
+    string type = 3;
+    
+    // category 类目过滤
+    string category = 4;
+    
+    // min_rating 最低评分过滤
+    double min_rating = 5;
+    
+    // tags 标签过滤
+    repeated string tags = 6;
+}
+
+// SearchItemsResponse 搜索物品响应
+message SearchItemsResponse {
+    // items 搜索结果
+    repeated Item items = 1;
+    
+    // total 匹配总数
+    int64 total = 2;
+    
+    // query_time_ms 查询耗时（毫秒）
+    int64 query_time_ms = 3;
+}
+
+// GetSimilarItemsRequest 获取相似物品请求
+message GetSimilarItemsRequest {
+    // item_id 物品ID
+    string item_id = 1;
+    
+    // top_k 返回数量
+    int32 top_k = 2;
+    
+    // similarity_type 相似类型: content, collaborative, semantic, all
+    string similarity_type = 3;
+    
+    // min_score 最低相似度阈值
+    float min_score = 4;
+}
+
+// GetSimilarItemsResponse 获取相似物品响应
+message GetSimilarItemsResponse {
+    // items 相似物品列表
+    repeated SimilarItem items = 1;
+    
+    // query_time_ms 查询耗时（毫秒）
+    int64 query_time_ms = 2;
+}
+
+// GetItemStatsRequest 获取物品统计请求
+message GetItemStatsRequest {
+    // item_id 物品ID
+    string item_id = 1;
+}
+
+// GetItemStatsResponse 获取物品统计响应
+message GetItemStatsResponse {
+    // stats 物品统计
+    ItemStats stats = 1;
+}
+
+// BatchGetItemStatsRequest 批量获取物品统计请求
+message BatchGetItemStatsRequest {
+    // item_ids 物品ID列表
+    repeated string item_ids = 1;
+}
+
+// BatchGetItemStatsResponse 批量获取物品统计响应
+message BatchGetItemStatsResponse {
+    // stats 物品统计映射
+    map<string, ItemStats> stats = 1;
+    
+    // not_found_ids 未找到的物品ID列表
+    repeated string not_found_ids = 2;
+}
+
+// UpdateItemEmbeddingRequest 更新物品向量请求
+message UpdateItemEmbeddingRequest {
+    // item_id 物品ID
+    string item_id = 1;
+    
+    // embedding 物品向量
+    repeated float embedding = 2;
+    
+    // semantic_id 语义ID
+    SemanticID semantic_id = 3;
+}
+
+// UpdateItemEmbeddingResponse 更新物品向量响应
+message UpdateItemEmbeddingResponse {
+    // success 是否成功
+    bool success = 1;
+    
+    // message 响应消息
+    string message = 2;
+}
+

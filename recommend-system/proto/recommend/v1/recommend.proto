@@ -1,0 +1,281 @@
+// recommend.proto - 推荐服务 gRPC 接口定义
+// 
+// 该文件定义了推荐系统核心的 gRPC 服务接口，与 interfaces.go 中的
+// RecommendService 接口保持对应关系。
+//
+// 对应接口：
+//   - RecommendService.GetRecommendations -> RecommendService.GetRecommendations
+//   - RecommendService.GetSimilarItemRecommendations -> RecommendService.GetSimilarItems
+//   - RecommendService.SubmitFeedback -> RecommendService.SubmitFeedback
+
+syntax = "proto3";
+
+package recommend.v1;
+
+option go_package = "recommend-system/proto/recommend/v1;recommendv1";
+
+import "google/protobuf/timestamp.proto";
+
+// =============================================================================
+// 推荐服务定义
+// =============================================================================
+
+// RecommendService 推荐服务
+// 提供推荐获取、相似物品查询和反馈提交等功能
+service RecommendService {
+    // GetRecommendations 获取个性化推荐列表
+    // 对应 interfaces.RecommendService.GetRecommendations
+    rpc GetRecommendations(GetRecommendationsRequest) returns (GetRecommendationsResponse);
+    
+    // GetSimilarItems 获取相似物品推荐
+    // 对应 interfaces.RecommendService.GetSimilarItemRecommendations
+    rpc GetSimilarItems(GetSimilarItemsRequest) returns (GetSimilarItemsResponse);
+    
+    // SubmitFeedback 提交用户反馈
+    // 对应 interfaces.RecommendService.SubmitFeedback
+    rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+    
+    // StreamRecommendations 流式推荐（实时推荐流）
+    // 用于实时推送推荐结果
+    rpc StreamRecommendations(StreamRecommendationsRequest) returns (stream RecommendationEvent);
+    
+    // BatchGetRecommendations 批量获取推荐
+    // 用于提高批量请求的效率
+    rpc BatchGetRecommendations(BatchGetRecommendationsRequest) returns (BatchGetRecommendationsResponse);
+}
+
+// =============================================================================
+// 请求/响应消息定义
+// =============================================================================
+
+// GetRecommendationsRequest 获取推荐请求
+// 对应 interfaces.RecommendRequest
+message GetRecommendationsRequest {
+    // user_id 用户ID（必填）
+    string user_id = 1;
+    
+    // limit 返回推荐数量，默认20
+    int32 limit = 2;
+    
+    // context 推荐上下文信息
+    Context context = 3;
+    
+    // exclude_items 需要排除的物品ID列表
+    repeated string exclude_items = 4;
+    
+    // scene 推荐场景: home, search, detail, cart
+    string scene = 5;
+}
+
+// Context 推荐上下文
+message Context {
+    // device 设备类型: mobile, desktop, tablet
+    string device = 1;
+    
+    // os 操作系统: ios, android, windows, macos
+    string os = 2;
+    
+    // location 用户位置信息
+    string location = 3;
+    
+    // page_context 页面上下文
+    string page_context = 4;
+    
+    // timestamp 请求时间戳
+    google.protobuf.Timestamp timestamp = 5;
+    
+    // extra 额外上下文信息
+    map<string, string> extra = 6;
+}
+
+// GetRecommendationsResponse 获取推荐响应
+// 对应 interfaces.RecommendResponse
+message GetRecommendationsResponse {
+    // recommendations 推荐结果列表
+    repeated Recommendation recommendations = 1;
+    
+    // request_id 请求ID，用于追踪和调试
+    string request_id = 2;
+    
+    // strategy 使用的推荐策略
+    string strategy = 3;
+    
+    // latency_ms 推荐耗时（毫秒）
+    int64 latency_ms = 4;
+}
+
+// Recommendation 推荐项
+// 对应 interfaces.Recommendation
+message Recommendation {
+    // item_id 物品ID
+    string item_id = 1;
+    
+    // score 推荐得分
+    float score = 2;
+    
+    // reason 推荐理由（可用于解释推荐）
+    string reason = 3;
+    
+    // semantic_id 语义ID（三层层次化表示）
+    SemanticID semantic_id = 4;
+    
+    // position 推荐位置（1-based）
+    int32 position = 5;
+    
+    // source 推荐来源: model, hot, similar, coldstart
+    string source = 6;
+}
+
+// SemanticID 语义ID
+// 三层层次化语义表示，用于生成式推荐
+message SemanticID {
+    // l1 一级语义（粗粒度类目，1024 codes）
+    int32 l1 = 1;
+    
+    // l2 二级语义（细粒度属性，4096 codes）
+    int32 l2 = 2;
+    
+    // l3 三级语义（实例区分，16384 codes）
+    int32 l3 = 3;
+}
+
+// GetSimilarItemsRequest 获取相似物品请求
+message GetSimilarItemsRequest {
+    // item_id 物品ID
+    string item_id = 1;
+    
+    // limit 返回相似物品数量
+    int32 limit = 2;
+    
+    // user_id 可选用户ID，用于个性化相似推荐
+    string user_id = 3;
+}
+
+// GetSimilarItemsResponse 获取相似物品响应
+message GetSimilarItemsResponse {
+    // items 相似物品列表
+    repeated SimilarItem items = 1;
+    
+    // request_id 请求ID
+    string request_id = 2;
+}
+
+// SimilarItem 相似物品
+message SimilarItem {
+    // item_id 物品ID
+    string item_id = 1;
+    
+    // similarity 相似度得分 [0, 1]
+    float similarity = 2;
+    
+    // semantic_id 语义ID
+    SemanticID semantic_id = 3;
+}
+
+// SubmitFeedbackRequest 提交反馈请求
+// 对应 interfaces.Feedback
+message SubmitFeedbackRequest {
+    // user_id 用户ID
+    string user_id = 1;
+    
+    // item_id 物品ID
+    string item_id = 2;
+    
+    // action 反馈动作: click, like, dislike, buy, share, view, skip
+    string action = 3;
+    
+    // request_id 关联的推荐请求ID
+    string request_id = 4;
+    
+    // timestamp 反馈时间戳
+    google.protobuf.Timestamp timestamp = 5;
+    
+    // context 反馈上下文
+    map<string, string> context = 6;
+    
+    // duration_ms 用户停留/观看时长（毫秒）
+    int64 duration_ms = 7;
+}
+
+// SubmitFeedbackResponse 提交反馈响应
+message SubmitFeedbackResponse {
+    // success 是否成功
+    bool success = 1;
+    
+    // message 响应消息
+    string message = 2;
+}
+
+// StreamRecommendationsRequest 流式推荐请求
+message StreamRecommendationsRequest {
+    // user_id 用户ID
+    string user_id = 1;
+    
+    // context 推荐上下文
+    Context context = 2;
+    
+    // batch_size 每批推送的推荐数量
+    int32 batch_size = 3;
+}
+
+// RecommendationEvent 推荐事件（用于流式推送）
+message RecommendationEvent {
+    // event_type 事件类型
+    oneof event {
+        // recommendation 推荐项
+        Recommendation recommendation = 1;
+        
+        // heartbeat 心跳消息
+        string heartbeat = 2;
+        
+        // end_signal 结束信号
+        bool end_signal = 3;
+    }
+    
+    // sequence_number 事件序列号
+    int64 sequence_number = 4;
+}
+
+// BatchGetRecommendationsRequest 批量获取推荐请求
+message BatchGetRecommendationsRequest {
+    // requests 推荐请求列表
+    repeated GetRecommendationsRequest requests = 1;
+}
+
+// BatchGetRecommendationsResponse 批量获取推荐响应
+message BatchGetRecommendationsResponse {
+    // responses 推荐响应列表
+    repeated GetRecommendationsResponse responses = 1;
+}
+
+// =============================================================================
+// 健康检查
+// =============================================================================
+
+// HealthCheckRequest 健康检查请求
+message HealthCheckRequest {
+    // service 要检查的服务名称
+    string service = 1;
+}
+
+// HealthCheckResponse 健康检查响应
+message HealthCheckResponse {
+    // status 服务状态: SERVING, NOT_SERVING, UNKNOWN
+    ServingStatus status = 1;
+    
+    // message 状态描述
+    string message = 2;
+}
+
+// ServingStatus 服务状态枚举
+enum ServingStatus {
+    // UNKNOWN 未知状态
+    UNKNOWN = 0;
+    
+    // SERVING 正常服务中
+    SERVING = 1;
+    
+    // NOT_SERVING 服务不可用
+    NOT_SERVING = 2;
+}
+
