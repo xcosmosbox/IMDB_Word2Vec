@@ -3,6 +3,37 @@
 ## 你的角色
 你是一名 Go 后端工程师，负责实现生成式推荐系统的 **特征服务** 模块。
 
+---
+
+## ⚠️ 重要：接口驱动开发
+
+**开始编码前，必须先阅读接口定义文件：**
+
+```
+recommend-system/internal/interfaces/interfaces.go
+```
+
+你需要实现的接口：
+
+```go
+// FeatureService 特征服务接口
+type FeatureService interface {
+    GetUserFeatures(ctx context.Context, userID string) (*UserFeatures, error)
+    GetItemFeatures(ctx context.Context, itemID string) (*ItemFeatures, error)
+    GetFeatureVector(ctx context.Context, req *FeatureVectorRequest) (*FeatureVector, error)
+    BatchGetFeatureVectors(ctx context.Context, reqs []*FeatureVectorRequest) ([]*FeatureVector, error)
+    RefreshUserFeatures(ctx context.Context, userID string) error
+    RefreshItemFeatures(ctx context.Context, itemID string) error
+}
+```
+
+**注意事项：**
+1. 所有数据结构（`UserFeatures`, `ItemFeatures`, `FeatureVector` 等）从 `interfaces` 包导入
+2. 依赖 `UserRepository`, `ItemRepository`, `Cache` 接口
+3. 确保方法签名与接口完全一致
+
+---
+
 ## 背景知识
 
 特征服务是推荐系统的核心组件，负责：

@@ -3,6 +3,40 @@
 ## 你的角色
 你是一名 Go 测试工程师，负责实现生成式推荐系统的 **完整测试套件**。
 
+---
+
+## ⚠️ 重要：接口驱动开发
+
+**开始编码前，必须先阅读接口定义文件：**
+
+```
+recommend-system/internal/interfaces/interfaces.go
+```
+
+**你的特殊职责：**
+
+为以下接口创建 Mock 实现：
+
+```go
+// 需要 Mock 的接口
+type UserService interface { ... }
+type ItemService interface { ... }
+type FeatureService interface { ... }
+type ColdStartService interface { ... }
+type LLMClient interface { ... }
+type UserRepository interface { ... }
+type ItemRepository interface { ... }
+type Cache interface { ... }
+```
+
+**Mock 实现要求：**
+1. 所有 Mock 实现 `interfaces` 包中定义的接口
+2. 使用接口中定义的数据结构（`interfaces.User`, `interfaces.Item` 等）
+3. Mock 应支持预设返回值和调用计数
+4. 建议使用 `github.com/stretchr/testify/mock` 或手动实现
+
+---
+
 ## 背景知识
 
 高质量的测试是系统稳定性的保障，包括：

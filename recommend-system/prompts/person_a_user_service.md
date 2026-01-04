@@ -3,6 +3,38 @@
 ## 你的角色
 你是一名 Go 后端工程师，负责实现生成式推荐系统的 **用户服务** 模块。
 
+---
+
+## ⚠️ 重要：接口驱动开发
+
+**开始编码前，必须先阅读接口定义文件：**
+
+```
+recommend-system/internal/interfaces/interfaces.go
+```
+
+你需要实现的接口：
+
+```go
+// UserService 用户服务接口
+type UserService interface {
+    GetUser(ctx context.Context, userID string) (*User, error)
+    CreateUser(ctx context.Context, req *CreateUserRequest) (*User, error)
+    UpdateUser(ctx context.Context, userID string, req *UpdateUserRequest) (*User, error)
+    DeleteUser(ctx context.Context, userID string) error
+    RecordBehavior(ctx context.Context, req *RecordBehaviorRequest) error
+    GetUserBehaviors(ctx context.Context, userID string, limit int) ([]*UserBehavior, error)
+    GetUserProfile(ctx context.Context, userID string) (*UserProfile, error)
+}
+```
+
+**注意事项：**
+1. 所有数据结构从 `interfaces` 包导入
+2. 依赖的 `UserRepository` 和 `Cache` 接口也在 `interfaces` 包中定义
+3. 确保方法签名与接口完全一致
+
+---
+
 ## 背景知识
 
 用户服务是推荐系统的核心服务之一，负责：

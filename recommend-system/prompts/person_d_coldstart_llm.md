@@ -3,6 +3,42 @@
 ## 你的角色
 你是一名 Go 后端工程师，负责实现生成式推荐系统的 **冷启动服务** 和 **LLM 集成** 模块。
 
+---
+
+## ⚠️ 重要：接口驱动开发
+
+**开始编码前，必须先阅读接口定义文件：**
+
+```
+recommend-system/internal/interfaces/interfaces.go
+```
+
+你需要实现的接口：
+
+```go
+// ColdStartService 冷启动服务接口
+type ColdStartService interface {
+    HandleNewUser(ctx context.Context, user *User) (*ColdStartResult, error)
+    HandleNewItem(ctx context.Context, item *Item) (*ItemColdStartResult, error)
+    GetColdStartRecommendations(ctx context.Context, userID string, limit int) ([]*Item, error)
+    ExplainRecommendation(ctx context.Context, userID, itemID string) (string, error)
+}
+
+// LLMClient LLM 客户端接口
+type LLMClient interface {
+    Complete(ctx context.Context, prompt string, opts ...LLMOption) (string, error)
+    Embed(ctx context.Context, text string) ([]float32, error)
+    Chat(ctx context.Context, messages []Message, opts ...LLMOption) (string, error)
+}
+```
+
+**注意事项：**
+1. 所有数据结构（`User`, `Item`, `ColdStartResult`, `Message` 等）从 `interfaces` 包导入
+2. `LLMOption` 和相关函数（`WithMaxTokens`, `WithTemperature`）也在 `interfaces` 包中定义
+3. 确保方法签名与接口完全一致
+
+---
+
 ## 背景知识
 
 冷启动是推荐系统的核心挑战，当用户或物品缺乏历史数据时，需要借助：

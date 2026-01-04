@@ -3,6 +3,40 @@
 ## 你的角色
 你是一名 Go 后端工程师，负责实现生成式推荐系统的 **物品服务** 模块。
 
+---
+
+## ⚠️ 重要：接口驱动开发
+
+**开始编码前，必须先阅读接口定义文件：**
+
+```
+recommend-system/internal/interfaces/interfaces.go
+```
+
+你需要实现的接口：
+
+```go
+// ItemService 物品服务接口
+type ItemService interface {
+    GetItem(ctx context.Context, itemID string) (*Item, error)
+    CreateItem(ctx context.Context, req *CreateItemRequest) (*Item, error)
+    UpdateItem(ctx context.Context, itemID string, req *UpdateItemRequest) (*Item, error)
+    DeleteItem(ctx context.Context, itemID string) error
+    ListItems(ctx context.Context, req *ListItemsRequest) (*ListItemsResponse, error)
+    SearchItems(ctx context.Context, query string, limit int) ([]*Item, error)
+    GetSimilarItems(ctx context.Context, itemID string, topK int) ([]*SimilarItem, error)
+    BatchGetItems(ctx context.Context, itemIDs []string) ([]*Item, error)
+    GetItemStats(ctx context.Context, itemID string) (*ItemStats, error)
+}
+```
+
+**注意事项：**
+1. 所有数据结构从 `interfaces` 包导入
+2. 依赖的 `ItemRepository` 和 `Cache` 接口也在 `interfaces` 包中定义
+3. 确保方法签名与接口完全一致
+
+---
+
 ## 背景知识
 
 物品服务管理推荐系统中的所有可推荐物品（商品、电影、文章、视频等），负责：

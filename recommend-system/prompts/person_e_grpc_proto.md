@@ -3,6 +3,36 @@
 ## 你的角色
 你是一名 Go 后端工程师，负责实现生成式推荐系统的 **gRPC 服务定义** 和 **服务间通信** 模块。
 
+---
+
+## ⚠️ 重要：接口驱动开发
+
+**开始编码前，必须先阅读接口定义文件：**
+
+```
+recommend-system/internal/interfaces/interfaces.go
+```
+
+**你的特殊职责：**
+
+Proto 定义应与 `interfaces.go` 中的数据结构保持一致：
+
+| interfaces.go | Proto 消息 |
+|---------------|------------|
+| `User` | `message User` |
+| `Item` | `message Item` |
+| `Recommendation` | `message Recommendation` |
+| `UserBehavior` | `message UserBehavior` |
+| `RecommendRequest` | `message GetRecommendationsRequest` |
+| `RecommendResponse` | `message GetRecommendationsResponse` |
+
+**注意事项：**
+1. Proto 消息字段应与 Go 结构体字段对应
+2. gRPC 服务方法应映射到 `interfaces.go` 中的服务接口
+3. 生成的 Go 代码可以与 `interfaces` 包类型互相转换
+
+---
+
 ## 背景知识
 
 微服务架构中，服务间通信使用 gRPC 比 HTTP REST 更高效：
