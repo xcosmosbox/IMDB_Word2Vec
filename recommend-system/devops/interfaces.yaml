@@ -1,0 +1,228 @@
+# DevOps 接口定义
+# 
+# 定义各模块之间的契约和依赖关系
+# 所有开发者必须遵循此规范
+
+# =============================================================================
+# CI/CD 接口
+# =============================================================================
+cicd:
+  # GitHub Actions Workflows
+  workflows:
+    - name: ci.yaml
+      triggers: [push, pull_request]
+      jobs: [lint, test, build]
+    
+    - name: cd-dev.yaml
+      triggers: [push to develop]
+      jobs: [build, deploy-dev]
+    
+    - name: cd-prod.yaml
+      triggers: [release tag]
+      jobs: [build, test, security-scan, deploy-prod]
+  
+  # 构建产物
+  artifacts:
+    - recommend-service:latest
+    - user-service:latest
+    - item-service:latest
+    - ugt-inference:latest
+    - user-app:latest
+    - admin-app:latest
+  
+  # 环境变量契约
+  required_secrets:
+    - DOCKER_REGISTRY_URL
+    - DOCKER_USERNAME
+    - DOCKER_PASSWORD
+    - KUBECONFIG_DEV
+    - KUBECONFIG_PROD
+    - SLACK_WEBHOOK_URL
+
+# =============================================================================
+# Kubernetes 接口
+# =============================================================================
+kubernetes:
+  # 命名空间
+  namespaces:
+    - recommend-dev
+    - recommend-prod
+  
+  # 服务端口契约
+  services:
+    recommend-service:
+      http: 8080
+      grpc: 9090
+      metrics: 9091
+    
+    user-service:
+      http: 8081
+      grpc: 9091
+      metrics: 9092
+    
+    item-service:
+      http: 8082
+      grpc: 9092
+      metrics: 9093
+    
+    ugt-inference:
+      grpc: 50051
+      metrics: 9094
+  
+  # 资源配额
+  resource_quotas:
+    dev:
+      cpu: "8"
+      memory: "16Gi"
+    prod:
+      cpu: "32"
+      memory: "64Gi"
+  
+  # ConfigMap 键名契约
+  configmaps:
+    app-config:
+      - LOG_LEVEL
+      - ENABLE_TRACING
+      - CACHE_TTL
+    
+    db-config:
+      - POSTGRES_HOST
+      - REDIS_HOST
+      - MILVUS_HOST
+
+# =============================================================================
+# 监控接口
+# =============================================================================
+monitoring:
+  # Prometheus 指标契约
+  metrics:
+    # Go 后端指标
+    go_services:
+      - http_requests_total{service, method, path, status}
+      - http_request_duration_seconds{service, method, path}
+      - grpc_requests_total{service, method, status}
+      - cache_hit_ratio{cache_type}
+      - db_query_duration_seconds{query_type}
+    
+    # Python 推理指标
+    inference:
+      - inference_requests_total{model}
+      - inference_latency_seconds{model, batch_size}
+      - model_load_time_seconds{model}
+      - gpu_memory_usage_bytes{device}
+  
+  # 告警规则契约
+  alert_rules:
+    critical:
+      - name: ServiceDown
+        condition: "up == 0 for 1m"
+      - name: HighErrorRate
+        condition: "error_rate > 0.05 for 5m"
+      - name: HighLatency
+        condition: "p99_latency > 500ms for 5m"
+    
+    warning:
+      - name: HighMemoryUsage
+        condition: "memory_usage > 80% for 10m"
+      - name: HighCPUUsage
+        condition: "cpu_usage > 70% for 10m"
+  
+  # Grafana Dashboard ID 契约
+  dashboards:
+    - id: overview
+      name: "系统总览"
+    - id: services
+      name: "服务监控"
+    - id: inference
+      name: "推理监控"
+    - id: database
+      name: "数据库监控"
+
+# =============================================================================
+# 日志接口
+# =============================================================================
+logging:
+  # 日志格式契约 (JSON)
+  format:
+    required_fields:
+      - timestamp
+      - level
+      - service
+      - trace_id
+      - message
+    optional_fields:
+      - user_id
+      - request_id
+      - duration_ms
+      - error_stack
+  
+  # 日志级别
+  levels:
+    - DEBUG
+    - INFO
+    - WARN
+    - ERROR
+    - FATAL
+  
+  # 日志标签
+  labels:
+    - app
+    - env
+    - pod
+    - namespace
+
+# =============================================================================
+# 数据库接口
+# =============================================================================
+database:
+  # 迁移版本契约
+  migrations:
+    format: "V{version}__{description}.sql"
+    naming: snake_case
+  
+  # 备份契约
+  backup:
+    frequency: daily
+    retention: 30_days
+    format: pg_dump
+  
+  # 连接池配置
+  pool:
+    min_connections: 5
+    max_connections: 50
+    idle_timeout: 300s
+
+# =============================================================================
+# 性能测试接口
+# =============================================================================
+testing:
+  # 负载测试场景
+  load_scenarios:
+    - name: baseline
+      rps: 100
+      duration: 5m
+    
+    - name: stress
+      rps: 1000
+      duration: 10m
+    
+    - name: spike
+      rps: 5000
+      duration: 2m
+  
+  # SLA 契约
+  sla:
+    availability: 99.9%
+    p50_latency: 50ms
+    p99_latency: 200ms
+    error_rate: 0.1%
+  
+  # 报告格式
+  report:
+    format: [html, json, junit]
+    metrics:
+      - throughput
+      - latency_percentiles
+      - error_rate
+      - resource_usage
+

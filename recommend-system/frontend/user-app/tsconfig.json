@@ -1,0 +1,58 @@
+{
+  "compilerOptions": {
+    // 编译目标
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    
+    // 模块解析
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    
+    // JSX 支持
+    "jsx": "preserve",
+    
+    // 严格模式
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+    
+    // 路径别名
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@shared/*": ["../shared/*"]
+    },
+    
+    // 类型
+    "types": ["vite/client", "node"],
+    "skipLibCheck": true
+  },
+  
+  // 包含的文件
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.vue",
+    "../shared/**/*.ts"
+  ],
+  
+  // 排除的文件
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.spec.ts",
+    "**/*.test.ts"
+  ],
+  
+  // 引用其他配置
+  "references": [
+    { "path": "./tsconfig.node.json" }
+  ]
+}
+
