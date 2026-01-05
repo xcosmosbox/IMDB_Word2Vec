@@ -1,0 +1,93 @@
+# Development Environment Kustomization
+# 开发环境特定配置
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: recommend-system-dev
+
+# 命名空间
+namespace: recommend-dev
+
+# 名称前缀
+namePrefix: dev-
+
+# 通用标签
+commonLabels:
+  environment: development
+  tier: dev
+
+# 通用注解
+commonAnnotations:
+  app.kubernetes.io/environment: development
+  config.kubernetes.io/created-by: kustomize
+
+# 引用基础配置
+resources:
+  - ../../base
+  - resources/debug-tools.yaml
+
+# 补丁 - Strategic Merge Patches
+patches:
+  - path: patches/deployment-resources.yaml
+  - path: patches/hpa-scaling.yaml
+  - path: patches/configmap-dev.yaml
+
+# 镜像配置 - 开发环境使用最新标签
+images:
+  - name: registry.example.com/recommend/recommend-service
+    newName: registry.example.com/recommend/recommend-service
+    newTag: dev-latest
+  - name: registry.example.com/recommend/user-service
+    newName: registry.example.com/recommend/user-service
+    newTag: dev-latest
+  - name: registry.example.com/recommend/item-service
+    newName: registry.example.com/recommend/item-service
+    newTag: dev-latest
+  - name: registry.example.com/recommend/ugt-inference
+    newName: registry.example.com/recommend/ugt-inference
+    newTag: dev-latest
+  - name: registry.example.com/recommend/user-app
+    newName: registry.example.com/recommend/user-app
+    newTag: dev-latest
+  - name: registry.example.com/recommend/admin-app
+    newName: registry.example.com/recommend/admin-app
+    newTag: dev-latest
+
+# ConfigMap 覆盖
+configMapGenerator:
+  - name: app-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=debug
+      - ENABLE_TRACING=true
+      - TRACING_SAMPLE_RATE=1.0
+      - FEATURE_NEW_ALGORITHM=true
+      - FEATURE_AB_TEST=true
+      - RATE_LIMIT_RPS=100
+  - name: version-config
+    behavior: replace
+    literals:
+      - VERSION=dev
+      - BUILD_DATE=2025-01-05
+      - GIT_COMMIT=dev-branch
+
+# 副本数调整
+replicas:
+  - name: recommend-service
+    count: 1
+  - name: user-service
+    count: 1
+  - name: item-service
+    count: 1
+  - name: ugt-inference
+    count: 1
+  - name: user-app
+    count: 1
+  - name: admin-app
+    count: 1
+
+# 生成选项
+generatorOptions:
+  disableNameSuffixHash: true
+

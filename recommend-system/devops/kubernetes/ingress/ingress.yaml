@@ -1,0 +1,232 @@
+# Ingress 配置
+# 定义外部访问入口（可与 Istio Gateway 配合使用或独立使用）
+---
+# API Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: recommend-api-ingress
+  labels:
+    app.kubernetes.io/name: recommend-api-ingress
+    app.kubernetes.io/part-of: generative-recsys
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    
+    # 限流配置
+    nginx.ingress.kubernetes.io/limit-rps: "1000"
+    nginx.ingress.kubernetes.io/limit-connections: "100"
+    
+    # CORS 配置
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://recommend.example.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization,X-Request-ID"
+    
+    # 证书管理
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    
+    # 监控
+    nginx.ingress.kubernetes.io/enable-access-log: "true"
+    nginx.ingress.kubernetes.io/enable-opentracing: "true"
+    
+    # 后端协议
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    
+    # 会话亲和性（可选）
+    # nginx.ingress.kubernetes.io/affinity: "cookie"
+    # nginx.ingress.kubernetes.io/session-cookie-name: "recommend-session"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.recommend.example.com
+      secretName: recommend-api-tls
+  rules:
+    - host: api.recommend.example.com
+      http:
+        paths:
+          - path: /api/v1/recommend
+            pathType: Prefix
+            backend:
+              service:
+                name: recommend-service
+                port:
+                  number: 8080
+          
+          - path: /api/v1/user
+            pathType: Prefix
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 8081
+          
+          - path: /api/v1/item
+            pathType: Prefix
+            backend:
+              service:
+                name: item-service
+                port:
+                  number: 8082
+          
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: recommend-service
+                port:
+                  number: 8080
+---
+# Admin Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: recommend-admin-ingress
+  labels:
+    app.kubernetes.io/name: recommend-admin-ingress
+    app.kubernetes.io/part-of: generative-recsys
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    
+    # 基本认证（额外安全层）
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: admin-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "Authentication Required - Recommend Admin"
+    
+    # IP 白名单（可选）
+    # nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16"
+    
+    # 更严格的限流
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/limit-connections: "10"
+    
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - admin.recommend.example.com
+      secretName: recommend-admin-tls
+  rules:
+    - host: admin.recommend.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-app
+                port:
+                  number: 80
+---
+# User App Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: recommend-user-ingress
+  labels:
+    app.kubernetes.io/name: recommend-user-ingress
+    app.kubernetes.io/part-of: generative-recsys
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    
+    # 静态资源缓存
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+      }
+    
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - recommend.example.com
+        - www.recommend.example.com
+      secretName: recommend-user-tls
+  rules:
+    - host: recommend.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: user-app
+                port:
+                  number: 80
+    - host: www.recommend.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: user-app
+                port:
+                  number: 80
+---
+# gRPC Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: recommend-grpc-ingress
+  labels:
+    app.kubernetes.io/name: recommend-grpc-ingress
+    app.kubernetes.io/part-of: generative-recsys
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    
+    # gRPC 后端协议
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    
+    # gRPC 超时配置
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    
+    # HTTP/2
+    nginx.ingress.kubernetes.io/http2-push-preload: "true"
+    
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - grpc.recommend.example.com
+      secretName: recommend-grpc-tls
+  rules:
+    - host: grpc.recommend.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: recommend-service
+                port:
+                  number: 9090
+---
+# 基本认证 Secret（用于 Admin）
+apiVersion: v1
+kind: Secret
+metadata:
+  name: admin-basic-auth
+  labels:
+    app.kubernetes.io/name: admin-basic-auth
+    app.kubernetes.io/part-of: generative-recsys
+type: Opaque
+data:
+  # 格式: username:password (htpasswd 格式)
+  # 默认: admin:admin123 (请在生产环境更改)
+  auth: YWRtaW46JGFwcjEkSjNIZTdYM2gkMzZtNkhxaXBZb1FKcExUZzZPL3RPMA==
+

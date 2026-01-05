@@ -1,0 +1,500 @@
+# =============================================================================
+# Prometheus 告警规则
+# 
+# 基于 interfaces.yaml 中定义的告警规则契约:
+# - critical: ServiceDown, HighErrorRate, HighLatency
+# - warning: HighMemoryUsage, HighCPUUsage
+# =============================================================================
+
+groups:
+  # ==========================================================================
+  # 服务可用性告警 (Critical)
+  # ==========================================================================
+  - name: service-availability
+    interval: 30s
+    rules:
+      # ServiceDown - 服务停止响应
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "服务 {{ $labels.job }} 不可用"
+          description: "服务实例 {{ $labels.instance }} 已停止响应超过 1 分钟"
+          runbook_url: "https://wiki.example.com/runbooks/service-down"
+          dashboard_url: "https://grafana.example.com/d/overview"
+
+      # HighErrorRate - 高错误率
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (service)
+            /
+            sum(rate(http_requests_total[5m])) by (service)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "服务 {{ $labels.service }} 错误率过高"
+          description: "服务 {{ $labels.service }} 的 5xx 错误率为 {{ $value | humanizePercentage }}，超过阈值 5%"
+          runbook_url: "https://wiki.example.com/runbooks/high-error-rate"
+
+      # HighLatency - 高延迟 (P99 > 500ms)
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "服务 {{ $labels.service }} P99 延迟过高"
+          description: "服务 {{ $labels.service }} 的 P99 延迟为 {{ $value | humanizeDuration }}，超过阈值 500ms"
+          runbook_url: "https://wiki.example.com/runbooks/high-latency"
+
+      # 服务实例数不足
+      - alert: InsufficientReplicas
+        expr: |
+          kube_deployment_status_replicas_available{namespace=~"recommend.*"}
+          <
+          kube_deployment_spec_replicas{namespace=~"recommend.*"}
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Deployment {{ $labels.deployment }} 副本数不足"
+          description: "期望 {{ printf \"kube_deployment_spec_replicas{deployment='%s'}\" $labels.deployment | query | first | value }} 个副本，当前只有 {{ $value }} 个可用"
+
+  # ==========================================================================
+  # 推理服务告警
+  # ==========================================================================
+  - name: inference-alerts
+    interval: 30s
+    rules:
+      # 推理延迟过高
+      - alert: InferenceLatencyHigh
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(inference_latency_seconds_bucket[5m])) by (le, model)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          team: ml
+        annotations:
+          summary: "模型 {{ $labels.model }} 推理延迟过高"
+          description: "模型 {{ $labels.model }} 的 P95 推理延迟为 {{ $value | humanizeDuration }}，超过阈值 200ms"
+
+      # 推理错误率过高
+      - alert: InferenceErrorRateHigh
+        expr: |
+          (
+            sum(rate(inference_requests_total{status="error"}[5m])) by (model)
+            /
+            sum(rate(inference_requests_total[5m])) by (model)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          team: ml
+        annotations:
+          summary: "模型 {{ $labels.model }} 推理错误率过高"
+          description: "模型 {{ $labels.model }} 的推理错误率为 {{ $value | humanizePercentage }}"
+
+      # GPU 内存使用过高
+      - alert: GPUMemoryHigh
+        expr: |
+          (
+            DCGM_FI_DEV_FB_USED
+            /
+            DCGM_FI_DEV_FB_FREE + DCGM_FI_DEV_FB_USED
+          ) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          team: ml
+        annotations:
+          summary: "GPU 内存使用率过高"
+          description: "GPU {{ $labels.gpu }} 内存使用率为 {{ $value | humanizePercentage }}，超过阈值 90%"
+
+      # GPU 利用率过低（可能资源浪费）
+      - alert: GPUUnderutilized
+        expr: DCGM_FI_DEV_GPU_UTIL < 20
+        for: 30m
+        labels:
+          severity: info
+          team: ml
+        annotations:
+          summary: "GPU 利用率过低"
+          description: "GPU {{ $labels.gpu }} 利用率仅为 {{ $value }}%，可能存在资源浪费"
+
+      # 模型加载失败
+      - alert: ModelLoadFailed
+        expr: increase(model_load_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: ml
+        annotations:
+          summary: "模型加载失败"
+          description: "模型 {{ $labels.model }} 在过去 5 分钟内加载失败 {{ $value }} 次"
+
+      # 批处理队列积压
+      - alert: BatchQueueBacklog
+        expr: inference_batch_queue_size > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: ml
+        annotations:
+          summary: "推理批处理队列积压"
+          description: "推理队列积压 {{ $value }} 个请求，可能需要扩容"
+
+  # ==========================================================================
+  # 资源使用告警 (Warning)
+  # ==========================================================================
+  - name: resource-alerts
+    interval: 30s
+    rules:
+      # HighMemoryUsage - 内存使用过高 (>80%)
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            container_memory_usage_bytes{namespace=~"recommend.*"}
+            /
+            container_spec_memory_limit_bytes{namespace=~"recommend.*"}
+          ) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "容器内存使用率过高"
+          description: "Pod {{ $labels.pod }} 内存使用率为 {{ $value | humanizePercentage }}，超过阈值 80%"
+          runbook_url: "https://wiki.example.com/runbooks/high-memory-usage"
+
+      # HighCPUUsage - CPU 使用过高 (>70%)
+      - alert: HighCPUUsage
+        expr: |
+          (
+            sum(rate(container_cpu_usage_seconds_total{namespace=~"recommend.*"}[5m])) by (pod)
+            /
+            sum(container_spec_cpu_quota{namespace=~"recommend.*"}/container_spec_cpu_period{namespace=~"recommend.*"}) by (pod)
+          ) > 0.7
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "容器 CPU 使用率过高"
+          description: "Pod {{ $labels.pod }} CPU 使用率为 {{ $value | humanizePercentage }}，超过阈值 70%"
+          runbook_url: "https://wiki.example.com/runbooks/high-cpu-usage"
+
+      # Pod 频繁重启
+      - alert: PodCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total{namespace=~"recommend.*"}[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Pod 频繁重启"
+          description: "Pod {{ $labels.pod }} 在过去 1 小时内重启 {{ $value }} 次"
+
+      # OOM Killed
+      - alert: ContainerOOMKilled
+        expr: |
+          kube_pod_container_status_last_terminated_reason{reason="OOMKilled", namespace=~"recommend.*"} == 1
+        for: 0m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "容器 OOM 被终止"
+          description: "Pod {{ $labels.pod }} 中的容器 {{ $labels.container }} 因 OOM 被终止"
+
+      # PVC 空间不足
+      - alert: PVCSpaceLow
+        expr: |
+          (
+            kubelet_volume_stats_used_bytes{namespace=~"recommend.*"}
+            /
+            kubelet_volume_stats_capacity_bytes{namespace=~"recommend.*"}
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "PVC 存储空间不足"
+          description: "PVC {{ $labels.persistentvolumeclaim }} 使用率为 {{ $value | humanizePercentage }}"
+
+  # ==========================================================================
+  # 数据库告警
+  # ==========================================================================
+  - name: database-alerts
+    interval: 30s
+    rules:
+      # PostgreSQL 不可用
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: dba
+        annotations:
+          summary: "PostgreSQL 不可用"
+          description: "PostgreSQL 实例 {{ $labels.instance }} 已停止响应超过 1 分钟"
+
+      # PostgreSQL 连接数过高
+      - alert: PostgresHighConnections
+        expr: |
+          (
+            pg_stat_database_numbackends
+            /
+            pg_settings_max_connections
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: dba
+        annotations:
+          summary: "PostgreSQL 连接数过高"
+          description: "PostgreSQL 连接使用率为 {{ $value | humanizePercentage }}，超过阈值 80%"
+
+      # PostgreSQL 慢查询
+      - alert: PostgresSlowQueries
+        expr: |
+          rate(pg_stat_database_tup_fetched[5m]) 
+          / 
+          (rate(pg_stat_database_blks_hit[5m]) + rate(pg_stat_database_blks_read[5m]) + 0.001) 
+          < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: dba
+        annotations:
+          summary: "PostgreSQL 查询效率低"
+          description: "数据库 {{ $labels.datname }} 缓存命中率低于 50%，可能存在慢查询"
+
+      # PostgreSQL 复制延迟
+      - alert: PostgresReplicationLag
+        expr: pg_replication_lag > 30
+        for: 5m
+        labels:
+          severity: warning
+          team: dba
+        annotations:
+          summary: "PostgreSQL 复制延迟"
+          description: "PostgreSQL 复制延迟 {{ $value }} 秒"
+
+      # Redis 不可用
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: dba
+        annotations:
+          summary: "Redis 不可用"
+          description: "Redis 实例 {{ $labels.instance }} 已停止响应"
+
+      # Redis 内存使用过高
+      - alert: RedisHighMemory
+        expr: |
+          (
+            redis_memory_used_bytes
+            /
+            redis_memory_max_bytes
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: dba
+        annotations:
+          summary: "Redis 内存使用率过高"
+          description: "Redis 内存使用率为 {{ $value | humanizePercentage }}，超过阈值 80%"
+
+      # Redis 连接数过高
+      - alert: RedisHighConnections
+        expr: redis_connected_clients > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: dba
+        annotations:
+          summary: "Redis 连接数过高"
+          description: "Redis 当前连接数 {{ $value }}，可能需要优化连接池"
+
+      # Milvus 不可用
+      - alert: MilvusDown
+        expr: milvus_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: dba
+        annotations:
+          summary: "Milvus 向量数据库不可用"
+          description: "Milvus 实例 {{ $labels.instance }} 已停止响应"
+
+      # Milvus 查询延迟过高
+      - alert: MilvusQueryLatencyHigh
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(milvus_proxy_search_latency_bucket[5m])) by (le)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: dba
+        annotations:
+          summary: "Milvus 查询延迟过高"
+          description: "Milvus P99 查询延迟为 {{ $value | humanizeDuration }}"
+
+  # ==========================================================================
+  # 业务指标告警
+  # ==========================================================================
+  - name: business-alerts
+    interval: 60s
+    rules:
+      # 推荐点击率过低
+      - alert: LowRecommendationCTR
+        expr: |
+          (
+            sum(rate(recommendation_clicks_total[1h]))
+            /
+            sum(rate(recommendation_impressions_total[1h]))
+          ) < 0.01
+        for: 30m
+        labels:
+          severity: warning
+          team: product
+        annotations:
+          summary: "推荐点击率过低"
+          description: "推荐 CTR 为 {{ $value | humanizePercentage }}，低于阈值 1%"
+
+      # 缓存命中率过低
+      - alert: LowCacheHitRatio
+        expr: |
+          (
+            sum(rate(cache_hits_total[5m]))
+            /
+            sum(rate(cache_requests_total[5m]))
+          ) < 0.7
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "缓存命中率过低"
+          description: "缓存命中率为 {{ $value | humanizePercentage }}，低于阈值 70%"
+
+      # 推荐请求量异常下降
+      - alert: RecommendationRequestDrop
+        expr: |
+          (
+            sum(rate(http_requests_total{service="recommend-service", path="/api/v1/recommend"}[5m]))
+            /
+            sum(rate(http_requests_total{service="recommend-service", path="/api/v1/recommend"}[5m] offset 1h))
+          ) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: product
+        annotations:
+          summary: "推荐请求量异常下降"
+          description: "推荐请求量较 1 小时前下降超过 50%"
+
+      # 冷启动用户比例过高
+      - alert: HighColdStartRatio
+        expr: |
+          (
+            sum(rate(cold_start_requests_total[1h]))
+            /
+            sum(rate(recommendation_requests_total[1h]))
+          ) > 0.3
+        for: 1h
+        labels:
+          severity: info
+          team: product
+        annotations:
+          summary: "冷启动用户比例过高"
+          description: "冷启动用户比例为 {{ $value | humanizePercentage }}，超过 30%"
+
+  # ==========================================================================
+  # gRPC 服务告警
+  # ==========================================================================
+  - name: grpc-alerts
+    interval: 30s
+    rules:
+      # gRPC 错误率过高
+      - alert: GRPCHighErrorRate
+        expr: |
+          (
+            sum(rate(grpc_requests_total{status!="OK"}[5m])) by (service, method)
+            /
+            sum(rate(grpc_requests_total[5m])) by (service, method)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "gRPC 服务 {{ $labels.service }} 方法 {{ $labels.method }} 错误率过高"
+          description: "错误率为 {{ $value | humanizePercentage }}"
+
+      # gRPC 延迟过高
+      - alert: GRPCHighLatency
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(grpc_server_handling_seconds_bucket[5m])) by (le, grpc_service, grpc_method)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "gRPC {{ $labels.grpc_service }}/{{ $labels.grpc_method }} P99 延迟过高"
+          description: "P99 延迟为 {{ $value | humanizeDuration }}"
+
+  # ==========================================================================
+  # 证书和安全告警
+  # ==========================================================================
+  - name: security-alerts
+    interval: 3600s
+    rules:
+      # TLS 证书即将过期
+      - alert: TLSCertExpiringSoon
+        expr: |
+          (
+            probe_ssl_earliest_cert_expiry - time()
+          ) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "TLS 证书即将过期"
+          description: "证书 {{ $labels.target }} 将在 {{ $value | humanize }} 天后过期"
+
+      # TLS 证书即将过期（紧急）
+      - alert: TLSCertExpiringCritical
+        expr: |
+          (
+            probe_ssl_earliest_cert_expiry - time()
+          ) / 86400 < 7
+        for: 1h
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "TLS 证书即将过期（紧急）"
+          description: "证书 {{ $labels.target }} 将在 {{ $value | humanize }} 天后过期，请立即更新！"
+

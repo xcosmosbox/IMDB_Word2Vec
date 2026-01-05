@@ -1,0 +1,378 @@
+# =============================================================================
+# 安全扫描工作流
+# 
+# 触发条件: 每日定时执行、手动触发、或 PR 时执行
+# 任务: 依赖漏洞扫描、代码安全分析、容器镜像扫描
+# =============================================================================
+
+name: Security Scan
+
+on:
+  schedule:
+    # 每天凌晨 2 点运行
+    - cron: '0 2 * * *'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '**/go.mod'
+      - '**/go.sum'
+      - '**/requirements.txt'
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/Dockerfile*'
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: '扫描类型'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - dependencies
+          - code
+          - containers
+      severity_threshold:
+        description: '严重性阈值'
+        required: false
+        default: 'HIGH'
+        type: choice
+        options:
+          - CRITICAL
+          - HIGH
+          - MEDIUM
+          - LOW
+
+env:
+  SEVERITY: ${{ github.event.inputs.severity_threshold || 'HIGH' }}
+
+jobs:
+  # ==========================================================================
+  # Go 依赖扫描
+  # ==========================================================================
+  go-dependencies:
+    name: Go Dependencies Scan
+    runs-on: ubuntu-latest
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'dependencies' || github.event.inputs.scan_type == ''
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Run Nancy (Sonatype)
+        working-directory: ./recommend-system
+        continue-on-error: true
+        run: |
+          go list -json -deps ./... 2>/dev/null | \
+            docker run --rm -i sonatypecommunity/nancy:latest sleuth
+      
+      - name: Run govulncheck
+        working-directory: ./recommend-system
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      
+      - name: Run Trivy on Go modules
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './recommend-system'
+          scanners: 'vuln'
+          severity: ${{ env.SEVERITY }},CRITICAL
+          exit-code: '0'
+          format: 'table'
+
+  # ==========================================================================
+  # Python 依赖扫描
+  # ==========================================================================
+  python-dependencies:
+    name: Python Dependencies Scan
+    runs-on: ubuntu-latest
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'dependencies' || github.event.inputs.scan_type == ''
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install safety
+        run: pip install safety pip-audit
+      
+      - name: Run safety check
+        working-directory: ./recommend-system/algorithm
+        continue-on-error: true
+        run: |
+          safety check -r requirements.txt --full-report
+      
+      - name: Run pip-audit
+        working-directory: ./recommend-system/algorithm
+        continue-on-error: true
+        run: |
+          pip-audit -r requirements.txt
+      
+      - name: Run Trivy on Python dependencies
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './recommend-system/algorithm'
+          scanners: 'vuln'
+          severity: ${{ env.SEVERITY }},CRITICAL
+          exit-code: '0'
+          format: 'table'
+
+  # ==========================================================================
+  # Node.js 依赖扫描
+  # ==========================================================================
+  nodejs-dependencies:
+    name: Node.js Dependencies Scan
+    runs-on: ubuntu-latest
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'dependencies' || github.event.inputs.scan_type == ''
+    strategy:
+      matrix:
+        app: [user-app, admin]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Run npm audit
+        working-directory: ./recommend-system/frontend/${{ matrix.app }}
+        continue-on-error: true
+        run: |
+          npm ci
+          npm audit --audit-level=high
+      
+      - name: Run Snyk
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        with:
+          args: --file=recommend-system/frontend/${{ matrix.app }}/package.json --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ==========================================================================
+  # 代码安全扫描 (SAST)
+  # ==========================================================================
+  code-scan:
+    name: Code Security Scan (SAST)
+    runs-on: ubuntu-latest
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'code' || github.event.inputs.scan_type == ''
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Go 代码扫描 - Gosec
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt sarif -out gosec-results.sarif ./recommend-system/...'
+      
+      - name: Upload Gosec results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
+      
+      # Python 代码扫描 - Bandit
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Run Bandit
+        run: |
+          pip install bandit
+          bandit -r recommend-system/algorithm -f sarif -o bandit-results.sarif || true
+      
+      - name: Upload Bandit results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+      
+      # Semgrep 扫描
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+          generateSarif: true
+        continue-on-error: true
+
+  # ==========================================================================
+  # 密钥泄露检测
+  # ==========================================================================
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'code' || github.event.inputs.scan_type == ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+      
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ==========================================================================
+  # 容器镜像扫描
+  # ==========================================================================
+  container-scan:
+    name: Container Image Scan
+    runs-on: ubuntu-latest
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'containers' || github.event.inputs.scan_type == ''
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: recommend-service
+            dockerfile: deployments/docker/Dockerfile
+          - name: user-service
+            dockerfile: deployments/docker/Dockerfile.user
+          - name: item-service
+            dockerfile: deployments/docker/Dockerfile.item
+          - name: ugt-inference
+            dockerfile: algorithm/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build image for scanning
+        run: |
+          docker build \
+            -t scan-target:${{ matrix.image.name }} \
+            -f recommend-system/${{ matrix.image.dockerfile }} \
+            recommend-system/
+      
+      - name: Run Trivy container scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'scan-target:${{ matrix.image.name }}'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.image.name }}.sarif'
+          severity: ${{ env.SEVERITY }},CRITICAL
+          exit-code: '0'
+      
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-${{ matrix.image.name }}.sarif'
+          category: 'trivy-${{ matrix.image.name }}'
+      
+      - name: Run Grype container scan
+        uses: anchore/scan-action@v3
+        with:
+          image: 'scan-target:${{ matrix.image.name }}'
+          fail-build: false
+          severity-cutoff: high
+          output-format: sarif
+      
+      - name: Run Dockle lint
+        uses: erzz/dockle-action@v1
+        with:
+          image: 'scan-target:${{ matrix.image.name }}'
+          failure-threshold: high
+          exit-code: '0'
+
+  # ==========================================================================
+  # IaC 安全扫描
+  # ==========================================================================
+  iac-scan:
+    name: Infrastructure as Code Scan
+    runs-on: ubuntu-latest
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'code' || github.event.inputs.scan_type == ''
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: recommend-system/devops/kubernetes
+          framework: kubernetes
+          soft_fail: true
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+      
+      - name: Upload Checkov results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+      
+      - name: Run Trivy IaC scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'recommend-system/devops/kubernetes'
+          format: 'table'
+          exit-code: '0'
+
+  # ==========================================================================
+  # 扫描报告汇总
+  # ==========================================================================
+  report:
+    name: Security Report Summary
+    runs-on: ubuntu-latest
+    needs: [go-dependencies, python-dependencies, nodejs-dependencies, code-scan, secret-scan, container-scan, iac-scan]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan Type | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Go Dependencies | ${{ needs.go-dependencies.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Dependencies | ${{ needs.python-dependencies.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js Dependencies | ${{ needs.nodejs-dependencies.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Scan (SAST) | ${{ needs.code-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret Detection | ${{ needs.secret-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container Scan | ${{ needs.container-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| IaC Scan | ${{ needs.iac-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Notify on critical findings
+        if: contains(needs.*.result, 'failure')
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "⚠️ Security Scan Found Issues",
+              "attachments": [{
+                "color": "warning",
+                "fields": [
+                  {"title": "Repository", "value": "${{ github.repository }}", "short": true},
+                  {"title": "Branch", "value": "${{ github.ref_name }}", "short": true},
+                  {"title": "Action Required", "value": "Please review security scan results", "short": false}
+                ]
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+

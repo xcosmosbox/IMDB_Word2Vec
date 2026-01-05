@@ -1,0 +1,246 @@
+# Service 配置
+# 定义服务的网络访问策略和负载均衡
+---
+# Recommend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommend-service
+  labels:
+    app: recommend-service
+    app.kubernetes.io/name: recommend-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: generative-recsys
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9091"
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: grpc
+    - name: metrics
+      port: 9091
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app: recommend-service
+---
+# Recommend Service - Headless (用于 StatefulSet 或服务发现)
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommend-service-headless
+  labels:
+    app: recommend-service
+    app.kubernetes.io/name: recommend-service
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+  selector:
+    app: recommend-service
+---
+# User Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  labels:
+    app: user-service
+    app.kubernetes.io/name: user-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: generative-recsys
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9092"
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: 9091
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: grpc
+    - name: metrics
+      port: 9092
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app: user-service
+---
+# Item Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: item-service
+  labels:
+    app: item-service
+    app.kubernetes.io/name: item-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: generative-recsys
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9093"
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: 9092
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: grpc
+    - name: metrics
+      port: 9093
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app: item-service
+---
+# UGT Inference Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ugt-inference
+  labels:
+    app: ugt-inference
+    app.kubernetes.io/name: ugt-inference
+    app.kubernetes.io/component: inference
+    app.kubernetes.io/part-of: generative-recsys
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9094"
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: grpc
+    - name: metrics
+      port: 9094
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app: ugt-inference
+---
+# User Frontend App
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-app
+  labels:
+    app: user-app
+    app.kubernetes.io/name: user-app
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: user-app
+---
+# Admin Frontend App
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-app
+  labels:
+    app: admin-app
+    app.kubernetes.io/name: admin-app
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: admin-app
+---
+# External Service - PostgreSQL (ExternalName 示例)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  selector:
+    app: postgres
+---
+# External Service - Redis
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+  selector:
+    app: redis
+---
+# External Service - Milvus
+apiVersion: v1
+kind: Service
+metadata:
+  name: milvus-service
+  labels:
+    app.kubernetes.io/name: milvus
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  type: ClusterIP
+  ports:
+    - name: milvus
+      port: 19530
+      targetPort: 19530
+    - name: milvus-web
+      port: 9091
+      targetPort: 9091
+  selector:
+    app: milvus
+

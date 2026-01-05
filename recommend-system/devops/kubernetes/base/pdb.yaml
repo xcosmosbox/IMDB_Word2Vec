@@ -1,0 +1,97 @@
+# PodDisruptionBudget 配置
+# 确保在维护、升级或缩容期间保持服务可用性
+---
+# Recommend Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: recommend-service-pdb
+  labels:
+    app: recommend-service
+    app.kubernetes.io/name: recommend-service
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  # 至少保持 2 个 Pod 可用
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: recommend-service
+---
+# User Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: user-service-pdb
+  labels:
+    app: user-service
+    app.kubernetes.io/name: user-service
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  # 最多允许 1 个 Pod 不可用
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: user-service
+---
+# Item Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: item-service-pdb
+  labels:
+    app: item-service
+    app.kubernetes.io/name: item-service
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: item-service
+---
+# UGT Inference PDB (GPU 服务，更严格的保护)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ugt-inference-pdb
+  labels:
+    app: ugt-inference
+    app.kubernetes.io/name: ugt-inference
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  # GPU 服务至少保持 1 个可用
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ugt-inference
+---
+# User Frontend App PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: user-app-pdb
+  labels:
+    app: user-app
+    app.kubernetes.io/name: user-app
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: user-app
+---
+# Admin Frontend App PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: admin-app-pdb
+  labels:
+    app: admin-app
+    app.kubernetes.io/name: admin-app
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  # Admin 应用可以短暂不可用
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: admin-app
+

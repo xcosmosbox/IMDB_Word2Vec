@@ -1,0 +1,264 @@
+# =============================================================================
+# Loki 告警规则
+# 
+# 基于日志内容的告警规则，符合 interfaces.yaml 中的告警契约
+# =============================================================================
+
+groups:
+  # ===========================================================================
+  # 错误日志告警组
+  # ===========================================================================
+  - name: log-error-alerts
+    interval: 1m
+    rules:
+      # 高错误日志率告警
+      - alert: HighErrorLogRate
+        expr: |
+          sum(rate({level="ERROR"} | json [5m])) by (app, namespace) > 10
+        for: 5m
+        labels:
+          severity: warning
+          category: logging
+        annotations:
+          summary: "应用 {{ $labels.app }} 错误日志过多"
+          description: |
+            命名空间: {{ $labels.namespace }}
+            应用: {{ $labels.app }}
+            当前错误日志速率: {{ $value | printf "%.2f" }} 条/秒
+          runbook_url: "https://wiki.example.com/runbooks/high-error-log-rate"
+      
+      # 严重错误日志告警
+      - alert: CriticalErrorLogRate
+        expr: |
+          sum(rate({level="ERROR"} | json [5m])) by (app, namespace) > 50
+        for: 2m
+        labels:
+          severity: critical
+          category: logging
+        annotations:
+          summary: "应用 {{ $labels.app }} 发生严重错误"
+          description: |
+            命名空间: {{ $labels.namespace }}
+            应用: {{ $labels.app }}
+            当前错误日志速率: {{ $value | printf "%.2f" }} 条/秒
+            请立即检查服务状态！
+          runbook_url: "https://wiki.example.com/runbooks/critical-error-log-rate"
+      
+      # FATAL 日志检测
+      - alert: FatalLogDetected
+        expr: |
+          count_over_time({level="FATAL"} | json [5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          category: logging
+        annotations:
+          summary: "检测到 FATAL 级别日志"
+          description: |
+            应用 {{ $labels.app }} 产生了 FATAL 级别日志
+            这通常表示服务即将或已经崩溃
+          runbook_url: "https://wiki.example.com/runbooks/fatal-log-detected"
+
+  # ===========================================================================
+  # Panic 和崩溃告警组
+  # ===========================================================================
+  - name: log-panic-alerts
+    interval: 30s
+    rules:
+      # Panic 检测
+      - alert: PanicDetected
+        expr: |
+          count_over_time({level=~"ERROR|FATAL"} | json | message =~ "(?i)panic.*" [5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          category: crash
+        annotations:
+          summary: "检测到 Panic"
+          description: |
+            应用 {{ $labels.app }} 发生了 Panic
+            请立即检查服务状态和错误堆栈
+          runbook_url: "https://wiki.example.com/runbooks/panic-detected"
+      
+      # OOM 检测
+      - alert: OutOfMemoryDetected
+        expr: |
+          count_over_time({level=~"ERROR|FATAL"} | json | message =~ "(?i)(out of memory|OOM|memory allocation failed)" [5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          category: resource
+        annotations:
+          summary: "检测到内存溢出"
+          description: |
+            应用 {{ $labels.app }} 发生了内存溢出
+            建议增加内存配额或检查内存泄漏
+          runbook_url: "https://wiki.example.com/runbooks/oom-detected"
+      
+      # 连接错误检测
+      - alert: ConnectionErrorSpike
+        expr: |
+          sum(count_over_time({level="ERROR"} | json | message =~ "(?i)(connection refused|connection reset|connection timeout)" [5m])) by (app) > 10
+        for: 3m
+        labels:
+          severity: warning
+          category: network
+        annotations:
+          summary: "连接错误激增"
+          description: |
+            应用 {{ $labels.app }} 出现大量连接错误
+            请检查网络连接和依赖服务状态
+
+  # ===========================================================================
+  # 服务特定告警组
+  # ===========================================================================
+  - name: service-specific-alerts
+    interval: 1m
+    rules:
+      # 推荐服务推理错误
+      - alert: InferenceErrorRate
+        expr: |
+          sum(rate({app="ugt-inference", level="ERROR"} | json [5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          category: inference
+        annotations:
+          summary: "推理服务错误率过高"
+          description: |
+            UGT 推理服务错误率过高
+            当前错误速率: {{ $value | printf "%.2f" }} 条/秒
+          runbook_url: "https://wiki.example.com/runbooks/inference-error"
+      
+      # 数据库连接错误
+      - alert: DatabaseConnectionError
+        expr: |
+          count_over_time({level="ERROR"} | json | message =~ "(?i)(database|postgres|sql).*error" [5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+          category: database
+        annotations:
+          summary: "数据库连接错误"
+          description: |
+            检测到数据库相关错误
+            请检查数据库连接池和服务状态
+      
+      # Redis 连接错误
+      - alert: RedisConnectionError
+        expr: |
+          count_over_time({level="ERROR"} | json | message =~ "(?i)redis.*error" [5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          category: cache
+        annotations:
+          summary: "Redis 连接错误"
+          description: |
+            检测到 Redis 相关错误
+            请检查 Redis 服务状态
+
+  # ===========================================================================
+  # 性能相关告警组
+  # ===========================================================================
+  - name: performance-alerts
+    interval: 1m
+    rules:
+      # 慢请求检测
+      - alert: HighSlowRequestRate
+        expr: |
+          sum(rate({app=~".+"} | json | duration_ms > 500 [5m])) by (app) > 10
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "慢请求过多"
+          description: |
+            应用 {{ $labels.app }} 慢请求（>500ms）过多
+            当前速率: {{ $value | printf "%.2f" }} 条/秒
+      
+      # 超时告警
+      - alert: RequestTimeoutSpike
+        expr: |
+          count_over_time({level="ERROR"} | json | message =~ "(?i)timeout" [5m]) > 20
+        for: 3m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "请求超时激增"
+          description: |
+            检测到大量请求超时错误
+            请检查服务响应时间和依赖服务
+
+  # ===========================================================================
+  # 安全相关告警组
+  # ===========================================================================
+  - name: security-alerts
+    interval: 1m
+    rules:
+      # 认证失败检测
+      - alert: AuthenticationFailureSpike
+        expr: |
+          sum(count_over_time({level=~"WARN|ERROR"} | json | message =~ "(?i)(authentication failed|unauthorized|invalid token)" [5m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "认证失败次数激增"
+          description: |
+            检测到大量认证失败
+            可能存在暴力破解攻击
+          runbook_url: "https://wiki.example.com/runbooks/auth-failure-spike"
+      
+      # 权限拒绝检测
+      - alert: AuthorizationDeniedSpike
+        expr: |
+          sum(count_over_time({level=~"WARN|ERROR"} | json | message =~ "(?i)(forbidden|access denied|permission denied)" [5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "权限拒绝次数激增"
+          description: |
+            检测到大量权限拒绝错误
+            请检查权限配置是否正确
+
+  # ===========================================================================
+  # 日志系统健康告警组
+  # ===========================================================================
+  - name: logging-system-health
+    interval: 1m
+    rules:
+      # 日志摄入停止
+      - alert: LogIngestionStopped
+        expr: |
+          sum(rate({app=~".+"} [5m])) by (namespace) == 0
+        for: 10m
+        labels:
+          severity: critical
+          category: logging
+        annotations:
+          summary: "日志摄入已停止"
+          description: |
+            命名空间 {{ $labels.namespace }} 的日志摄入已停止
+            请检查 Promtail/Fluentd 状态
+      
+      # 日志量异常下降
+      - alert: LogVolumeDropped
+        expr: |
+          sum(rate({app=~".+"} [5m])) by (app) 
+          / sum(rate({app=~".+"} offset 1h [5m])) by (app) < 0.1
+        for: 15m
+        labels:
+          severity: warning
+          category: logging
+        annotations:
+          summary: "日志量异常下降"
+          description: |
+            应用 {{ $labels.app }} 的日志量相比1小时前下降了90%以上
+            请检查应用和日志收集器状态
+

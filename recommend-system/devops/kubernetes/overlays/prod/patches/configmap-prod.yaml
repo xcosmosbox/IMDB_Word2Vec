@@ -1,0 +1,85 @@
+# 生产环境 ConfigMap 补丁
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  # 日志配置 - 生产环境使用 JSON 格式
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  
+  # 链路追踪 - 较低的采样率
+  ENABLE_TRACING: "true"
+  TRACING_SAMPLE_RATE: "0.01"
+  
+  # 缓存配置 - 较长的 TTL
+  CACHE_TTL: "600"
+  CACHE_MAX_SIZE: "50000"
+  CACHE_EVICTION_POLICY: "lru"
+  
+  # 限流配置 - 生产级别
+  RATE_LIMIT_RPS: "10000"
+  RATE_LIMIT_BURST: "20000"
+  RATE_LIMIT_ENABLED: "true"
+  
+  # 特性开关 - 保守配置
+  FEATURE_NEW_ALGORITHM: "false"
+  FEATURE_AB_TEST: "true"
+  FEATURE_COLD_START_LLM: "true"
+  FEATURE_SEMANTIC_ID: "true"
+  FEATURE_DEBUG_MODE: "false"
+  
+  # 推荐服务配置 - 生产级别
+  RECOMMEND_BATCH_SIZE: "64"
+  RECOMMEND_TOP_K: "50"
+  RECOMMEND_TIMEOUT_MS: "50"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-config
+data:
+  # PostgreSQL - 生产环境
+  POSTGRES_HOST: "postgres-prod.database.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "recommend_prod"
+  POSTGRES_MAX_CONNECTIONS: "100"
+  POSTGRES_IDLE_TIMEOUT: "600"
+  POSTGRES_SSL_MODE: "require"
+  
+  # Redis - 生产环境 (集群模式)
+  REDIS_HOST: "redis-prod.cache.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_MAX_CONNECTIONS: "200"
+  REDIS_CLUSTER_ENABLED: "true"
+  
+  # Milvus - 生产环境
+  MILVUS_HOST: "milvus-prod.vector.svc.cluster.local"
+  MILVUS_PORT: "19530"
+  MILVUS_INDEX_TYPE: "IVF_SQ8"
+  MILVUS_NLIST: "4096"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-config
+data:
+  # 生产环境推理配置
+  INFERENCE_BATCH_SIZE: "64"
+  INFERENCE_MAX_SEQUENCE_LENGTH: "512"
+  INFERENCE_WARMUP_STEPS: "100"
+  
+  # TensorRT 优化
+  TENSORRT_PRECISION: "fp16"
+  TENSORRT_WORKSPACE_SIZE: "8192"
+  
+  # CUDA Graph 启用
+  CUDA_GRAPH_ENABLED: "true"
+  CUDA_MEMORY_FRACTION: "0.95"
+  
+  # M-FALCON 配置
+  MFALCON_ENABLED: "true"
+  MFALCON_CASCADE_K: "1000,100,20"
+

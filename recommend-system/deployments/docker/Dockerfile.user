@@ -1,0 +1,63 @@
+# =============================================================================
+# User Service Dockerfile
+# 
+# 多阶段构建，优化镜像大小
+# =============================================================================
+
+# 构建阶段
+FROM golang:1.22-alpine AS builder
+
+WORKDIR /app
+
+# 安装依赖
+RUN apk add --no-cache git ca-certificates tzdata
+
+# 复制 go.mod 和 go.sum
+COPY go.mod go.sum* ./
+RUN go mod download
+
+# 复制源代码
+COPY . .
+
+# 构建参数
+ARG VERSION=dev
+ARG BUILD_TIME
+
+# 构建
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+    -o /app/user-service \
+    ./cmd/user-service
+
+# 运行阶段
+FROM alpine:3.19
+
+WORKDIR /app
+
+# 安装基础依赖
+RUN apk add --no-cache ca-certificates tzdata curl
+
+# 创建非 root 用户
+RUN adduser -D -g '' appuser
+
+# 复制构建产物
+COPY --from=builder /app/user-service .
+COPY --from=builder /app/configs ./configs
+
+# 创建日志目录
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
+# 切换用户
+USER appuser
+
+# 暴露端口
+EXPOSE 8081 9091 9092
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
+
+# 启动命令
+ENTRYPOINT ["/app/user-service"]
+CMD ["-config", "/app/configs/config.yaml"]
+

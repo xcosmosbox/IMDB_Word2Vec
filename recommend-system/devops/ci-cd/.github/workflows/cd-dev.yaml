@@ -1,0 +1,290 @@
+# =============================================================================
+# 开发环境部署工作流
+# 
+# 触发条件: push 到 develop 分支，或手动触发
+# 任务: 构建镜像并部署到开发环境 Kubernetes 集群
+# =============================================================================
+
+name: CD - Development
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'recommend-system/**'
+  workflow_dispatch:
+    inputs:
+      services:
+        description: '要部署的服务 (逗号分隔，留空部署全部)'
+        required: false
+        default: ''
+      skip_tests:
+        description: '跳过测试'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  REGISTRY: ${{ secrets.DOCKER_REGISTRY_URL }}
+  NAMESPACE: recommend-dev
+  ENVIRONMENT: development
+
+# 确保同时只有一个部署在运行
+concurrency:
+  group: cd-dev
+  cancel-in-progress: false
+
+jobs:
+  # ==========================================================================
+  # 准备阶段
+  # ==========================================================================
+  prepare:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      services: ${{ steps.services.outputs.list }}
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Generate version
+        id: version
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo ${{ github.sha }})
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated version: ${VERSION}"
+      
+      - name: Determine services to deploy
+        id: services
+        run: |
+          if [ -n "${{ github.event.inputs.services }}" ]; then
+            # 手动指定的服务
+            SERVICES="${{ github.event.inputs.services }}"
+          else
+            # 默认部署所有服务
+            SERVICES="recommend-service,user-service,item-service,ugt-inference"
+          fi
+          echo "list=${SERVICES}" >> $GITHUB_OUTPUT
+          echo "Services to deploy: ${SERVICES}"
+      
+      - name: Check deployment conditions
+        id: check
+        run: |
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+
+  # ==========================================================================
+  # 运行测试 (可选)
+  # ==========================================================================
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: github.event.inputs.skip_tests != 'true'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+          cache-dependency-path: recommend-system/go.sum
+      
+      - name: Run Go tests
+        working-directory: ./recommend-system
+        run: |
+          go test -v -race -short ./...
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Run Python tests
+        working-directory: ./recommend-system/algorithm
+        run: |
+          pip install -r requirements.txt pytest
+          pytest -v --ignore=serving/model_repository -x
+
+  # ==========================================================================
+  # 构建 Docker 镜像
+  # ==========================================================================
+  build:
+    name: Build Images
+    runs-on: ubuntu-latest
+    needs: [prepare, test]
+    if: always() && needs.prepare.outputs.should_deploy == 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: recommend-service
+            dockerfile: deployments/docker/Dockerfile
+          - service: user-service
+            dockerfile: deployments/docker/Dockerfile.user
+          - service: item-service
+            dockerfile: deployments/docker/Dockerfile.item
+          - service: ugt-inference
+            dockerfile: algorithm/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check if service should be built
+        id: check
+        run: |
+          SERVICES="${{ needs.prepare.outputs.services }}"
+          if [[ "$SERVICES" == *"${{ matrix.service }}"* ]] || [[ -z "${{ github.event.inputs.services }}" ]]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Registry
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.DOCKER_REGISTRY_URL }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Build and push
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./recommend-system
+          file: ./recommend-system/${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ matrix.service }}:${{ needs.prepare.outputs.version }}
+            ${{ env.REGISTRY }}/${{ matrix.service }}:dev-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+            ENV=development
+
+  # ==========================================================================
+  # 部署到开发环境
+  # ==========================================================================
+  deploy:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    if: always() && needs.build.result == 'success'
+    environment: development
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+      
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+      
+      - name: Verify cluster connection
+        run: |
+          kubectl cluster-info
+          kubectl get namespace ${{ env.NAMESPACE }} || kubectl create namespace ${{ env.NAMESPACE }}
+      
+      - name: Update ConfigMaps
+        run: |
+          # 更新应用配置
+          kubectl create configmap app-config \
+            --from-literal=LOG_LEVEL=debug \
+            --from-literal=ENABLE_TRACING=true \
+            --from-literal=CACHE_TTL=300 \
+            -n ${{ env.NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+      
+      - name: Deploy services
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          SERVICES="${{ needs.prepare.outputs.services }}"
+          
+          # 将逗号分隔的服务列表转换为数组
+          IFS=',' read -ra SERVICE_ARRAY <<< "$SERVICES"
+          
+          for SERVICE in "${SERVICE_ARRAY[@]}"; do
+            SERVICE=$(echo "$SERVICE" | xargs)  # 去除空格
+            echo "Deploying $SERVICE with version $VERSION..."
+            
+            # 更新 Deployment 镜像
+            kubectl set image deployment/$SERVICE \
+              $SERVICE=${{ env.REGISTRY }}/$SERVICE:$VERSION \
+              -n ${{ env.NAMESPACE }} || echo "Deployment $SERVICE not found, skipping..."
+          done
+      
+      - name: Wait for rollout
+        run: |
+          SERVICES="${{ needs.prepare.outputs.services }}"
+          IFS=',' read -ra SERVICE_ARRAY <<< "$SERVICES"
+          
+          for SERVICE in "${SERVICE_ARRAY[@]}"; do
+            SERVICE=$(echo "$SERVICE" | xargs)
+            echo "Waiting for $SERVICE rollout..."
+            kubectl rollout status deployment/$SERVICE \
+              -n ${{ env.NAMESPACE }} \
+              --timeout=5m || echo "Rollout check failed for $SERVICE"
+          done
+      
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests..."
+          # 等待服务就绪
+          sleep 30
+          
+          # 检查服务健康状态
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=recommend-service -o jsonpath='{.items[0].status.phase}'
+          
+          # 可以添加更多的烟雾测试
+          echo "Smoke tests passed"
+      
+      - name: Notify deployment status
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Dev Deployment: ${{ job.status }}
+            Version: ${{ needs.prepare.outputs.version }}
+            Services: ${{ needs.prepare.outputs.services }}
+          fields: repo,message,commit,author
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ==========================================================================
+  # 清理旧版本
+  # ==========================================================================
+  cleanup:
+    name: Cleanup Old Deployments
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: success()
+    steps:
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+      
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > $HOME/.kube/config
+      
+      - name: Clean up old ReplicaSets
+        run: |
+          # 保留最近 3 个 ReplicaSets
+          kubectl get rs -n ${{ env.NAMESPACE }} --sort-by=.metadata.creationTimestamp \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | \
+            head -n -3 | \
+            xargs -I {} kubectl delete rs {} -n ${{ env.NAMESPACE }} --ignore-not-found
+

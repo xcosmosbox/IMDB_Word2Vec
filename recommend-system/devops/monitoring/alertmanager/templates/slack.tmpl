@@ -1,0 +1,254 @@
+{{/* ==========================================================================
+     Slack 告警模板
+     
+     用于格式化发送到 Slack 的告警消息
+     ========================================================================== */}}
+
+{{/* 告警标题 */}}
+{{ define "slack.title" -}}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " | " }}
+{{- end }}
+
+{{/* 告警详细内容 */}}
+{{ define "slack.text" -}}
+{{ range .Alerts -}}
+*告警名称:* {{ .Labels.alertname }}
+*严重级别:* {{ .Labels.severity | toUpper }}
+*服务:* {{ .Labels.service | default "N/A" }}
+*状态:* {{ .Status }}
+*开始时间:* {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}
+{{ if eq .Status "resolved" -}}
+*恢复时间:* {{ .EndsAt.Format "2006-01-02 15:04:05 MST" }}
+{{ end -}}
+
+*摘要:* {{ .Annotations.summary }}
+*详情:* {{ .Annotations.description }}
+
+{{ if .Annotations.runbook_url -}}
+📖 <{{ .Annotations.runbook_url }}|Runbook>
+{{ end -}}
+{{ if .Annotations.dashboard_url -}}
+📊 <{{ .Annotations.dashboard_url }}|Dashboard>
+{{ end -}}
+---
+{{ end -}}
+{{- end }}
+
+{{/* 告警颜色 */}}
+{{ define "slack.color" -}}
+{{ if eq .Status "firing" -}}
+    {{ if eq .CommonLabels.severity "critical" -}}
+    danger
+    {{- else if eq .CommonLabels.severity "warning" -}}
+    warning
+    {{- else -}}
+    #439FE0
+    {{- end -}}
+{{- else -}}
+good
+{{- end -}}
+{{- end }}
+
+{{/* Dashboard URL */}}
+{{ define "slack.dashboard_url" -}}
+{{ if .CommonAnnotations.dashboard_url -}}
+{{ .CommonAnnotations.dashboard_url }}
+{{- else -}}
+https://grafana.example.com/d/overview
+{{- end -}}
+{{- end }}
+
+{{/* Runbook URL */}}
+{{ define "slack.runbook_url" -}}
+{{ if .CommonAnnotations.runbook_url -}}
+{{ .CommonAnnotations.runbook_url }}
+{{- else -}}
+https://wiki.example.com/runbooks
+{{- end -}}
+{{- end }}
+
+{{/* ==========================================================================
+     PagerDuty 模板
+     ========================================================================== */}}
+
+{{/* PagerDuty 描述 */}}
+{{ define "pagerduty.description" -}}
+[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}
+{{- end }}
+
+{{/* PagerDuty 触发告警列表 */}}
+{{ define "pagerduty.firing" -}}
+{{ range .Alerts.Firing -}}
+- {{ .Labels.alertname }}: {{ .Annotations.summary }}
+{{ end -}}
+{{- end }}
+
+{{/* PagerDuty 已解决告警列表 */}}
+{{ define "pagerduty.resolved" -}}
+{{ range .Alerts.Resolved -}}
+- {{ .Labels.alertname }}: {{ .Annotations.summary }}
+{{ end -}}
+{{- end }}
+
+{{/* ==========================================================================
+     邮件模板
+     ========================================================================== */}}
+
+{{/* 邮件主题 */}}
+{{ define "email.subject" -}}
+{{ .GroupLabels.alertname }} - {{ .Status | toUpper }}
+{{- end }}
+
+{{/* 邮件 HTML 内容 */}}
+{{ define "email.html" -}}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            padding: 20px;
+            color: white;
+        }
+        .header.critical {
+            background-color: #dc3545;
+        }
+        .header.warning {
+            background-color: #ffc107;
+            color: #333;
+        }
+        .header.resolved {
+            background-color: #28a745;
+        }
+        .content {
+            padding: 20px;
+        }
+        .alert-item {
+            border-bottom: 1px solid #eee;
+            padding: 15px 0;
+        }
+        .alert-item:last-child {
+            border-bottom: none;
+        }
+        .label {
+            font-weight: bold;
+            color: #666;
+            display: inline-block;
+            width: 100px;
+        }
+        .value {
+            color: #333;
+        }
+        .footer {
+            background-color: #f8f9fa;
+            padding: 15px 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+        }
+        a.button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 5px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header {{ if eq .Status "firing" }}{{ if eq .CommonLabels.severity "critical" }}critical{{ else }}warning{{ end }}{{ else }}resolved{{ end }}">
+            <h2 style="margin: 0;">
+                {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }}
+                {{ .GroupLabels.alertname }}
+            </h2>
+            <p style="margin: 10px 0 0 0;">状态: {{ .Status | toUpper }}</p>
+        </div>
+        
+        <div class="content">
+            {{ range .Alerts }}
+            <div class="alert-item">
+                <p><span class="label">告警名称:</span> <span class="value">{{ .Labels.alertname }}</span></p>
+                <p><span class="label">严重级别:</span> <span class="value">{{ .Labels.severity }}</span></p>
+                <p><span class="label">服务:</span> <span class="value">{{ .Labels.service | default "N/A" }}</span></p>
+                <p><span class="label">开始时间:</span> <span class="value">{{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}</span></p>
+                {{ if eq .Status "resolved" }}
+                <p><span class="label">恢复时间:</span> <span class="value">{{ .EndsAt.Format "2006-01-02 15:04:05 MST" }}</span></p>
+                {{ end }}
+                <p><span class="label">摘要:</span></p>
+                <p class="value">{{ .Annotations.summary }}</p>
+                <p><span class="label">详情:</span></p>
+                <p class="value">{{ .Annotations.description }}</p>
+            </div>
+            {{ end }}
+            
+            <div style="text-align: center; margin-top: 20px;">
+                {{ if .CommonAnnotations.dashboard_url }}
+                <a href="{{ .CommonAnnotations.dashboard_url }}" class="button">📊 查看 Dashboard</a>
+                {{ end }}
+                {{ if .CommonAnnotations.runbook_url }}
+                <a href="{{ .CommonAnnotations.runbook_url }}" class="button">📖 查看 Runbook</a>
+                {{ end }}
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>此邮件由 AlertManager 自动发送</p>
+            <p>推荐系统监控平台 | {{ now.Format "2006-01-02 15:04:05" }}</p>
+        </div>
+    </div>
+</body>
+</html>
+{{- end }}
+
+{{/* ==========================================================================
+     企业微信模板 (可选)
+     ========================================================================== */}}
+
+{{ define "wechat.message" -}}
+{{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} **{{ .GroupLabels.alertname }}**
+
+**状态:** {{ .Status | toUpper }}
+**严重级别:** {{ .CommonLabels.severity }}
+
+{{ range .Alerts -}}
+---
+**服务:** {{ .Labels.service | default "N/A" }}
+**摘要:** {{ .Annotations.summary }}
+**详情:** {{ .Annotations.description }}
+**时间:** {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+{{ end -}}
+
+[查看详情]({{ template "slack.dashboard_url" . }})
+{{- end }}
+
+{{/* ==========================================================================
+     钉钉模板 (可选)
+     ========================================================================== */}}
+
+{{ define "dingtalk.message" -}}
+{
+    "msgtype": "markdown",
+    "markdown": {
+        "title": "{{ .GroupLabels.alertname }}",
+        "text": "{{ if eq .Status "firing" }}### 🚨 告警触发{{ else }}### ✅ 告警恢复{{ end }}\n\n**告警名称:** {{ .GroupLabels.alertname }}\n\n**状态:** {{ .Status | toUpper }}\n\n**严重级别:** {{ .CommonLabels.severity }}\n\n{{ range .Alerts }}---\n\n**服务:** {{ .Labels.service | default "N/A" }}\n\n**摘要:** {{ .Annotations.summary }}\n\n**详情:** {{ .Annotations.description }}\n\n{{ end }}"
+    }
+}
+{{- end }}
+

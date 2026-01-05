@@ -1,0 +1,116 @@
+# 开发环境资源限制调整
+# 降低资源请求以节省成本
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommend-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: recommend-service
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          # 开发环境启用详细日志
+          env:
+            - name: LOG_LEVEL
+              value: "debug"
+            - name: DEBUG_MODE
+              value: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: user-service
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: item-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: item-service
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ugt-inference
+spec:
+  template:
+    spec:
+      containers:
+        - name: ugt-inference
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "2000m"
+              memory: "8Gi"
+              nvidia.com/gpu: "1"
+          env:
+            - name: INFERENCE_BATCH_SIZE
+              value: "16"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: user-app
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: admin-app
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+

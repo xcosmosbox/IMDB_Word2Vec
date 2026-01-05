@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>性能测试报告 - {{ report_time }}</title>
+    <style>
+        :root {
+            --primary-color: #667eea;
+            --secondary-color: #764ba2;
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-color: #1e293b;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+            padding: 40px 30px;
+            border-radius: 16px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-meta {
+            display: flex;
+            gap: 30px;
+            margin-top: 15px;
+            opacity: 0.9;
+        }
+
+        .header-meta span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            border: 1px solid var(--border-color);
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Summary Grid */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .metric-card {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+            padding: 24px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .metric-card.success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .metric-card.warning {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+
+        .metric-card.danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .metric-label {
+            font-size: 0.875rem;
+            margin-top: 8px;
+            opacity: 0.9;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: var(--bg-color);
+            font-weight: 600;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        tr:hover {
+            background: #f8fafc;
+        }
+
+        /* Status Badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-pass {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge-fail {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        /* Charts Container */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        /* SLA Table */
+        .sla-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sla-status.pass::before {
+            content: '✓';
+            color: var(--success-color);
+            font-weight: bold;
+        }
+
+        .sla-status.fail::before {
+            content: '✗';
+            color: var(--danger-color);
+            font-weight: bold;
+        }
+
+        /* Progress Bar */
+        .progress-bar {
+            height: 8px;
+            background: var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--primary-color);
+            transition: width 0.3s ease;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.5rem;
+            }
+
+            .header-meta {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .metric-value {
+                font-size: 2rem;
+            }
+
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .card {
+            animation: fadeIn 0.3s ease forwards;
+        }
+
+        .summary-grid .metric-card:nth-child(1) { animation-delay: 0.1s; }
+        .summary-grid .metric-card:nth-child(2) { animation-delay: 0.2s; }
+        .summary-grid .metric-card:nth-child(3) { animation-delay: 0.3s; }
+        .summary-grid .metric-card:nth-child(4) { animation-delay: 0.4s; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>
+                🚀 性能测试报告
+            </h1>
+            <div class="header-meta">
+                <span>📅 {{ report_time }}</span>
+                <span>🔬 {{ test_type }}</span>
+                <span>⏱️ {{ duration | round(2) }}s</span>
+                <span>🎯 {{ environment }}</span>
+            </div>
+        </div>
+
+        <!-- Summary Metrics -->
+        <div class="summary-grid">
+            <div class="metric-card">
+                <div class="metric-value">{{ total_requests | format_number }}</div>
+                <div class="metric-label">总请求数</div>
+            </div>
+            <div class="metric-card success">
+                <div class="metric-value">{{ rps | round(2) }}</div>
+                <div class="metric-label">每秒请求数 (RPS)</div>
+            </div>
+            <div class="metric-card {% if avg_latency > 100 %}warning{% else %}success{% endif %}">
+                <div class="metric-value">{{ avg_latency | round(2) }}ms</div>
+                <div class="metric-label">平均延迟</div>
+            </div>
+            <div class="metric-card {% if error_rate > 1 %}danger{% elif error_rate > 0.1 %}warning{% else %}success{% endif %}">
+                <div class="metric-value">{{ error_rate | round(4) }}%</div>
+                <div class="metric-label">错误率</div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-grid">
+            <div class="card">
+                <h3 class="card-title">📈 RPS 趋势</h3>
+                <div class="chart-container">
+                    <canvas id="rpsChart"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <h3 class="card-title">⏱️ 延迟分布</h3>
+                <div class="chart-container">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Latency Distribution -->
+        <div class="card">
+            <h3 class="card-title">📊 延迟百分位数</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>指标</th>
+                            <th>值</th>
+                            <th>SLA 目标</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>P50</td>
+                            <td>{{ p50 | round(2) }}ms</td>
+                            <td>≤ 50ms</td>
+                            <td>
+                                <span class="badge {% if p50 <= 50 %}badge-pass{% else %}badge-fail{% endif %}">
+                                    {% if p50 <= 50 %}PASS{% else %}FAIL{% endif %}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>P90</td>
+                            <td>{{ p90 | round(2) }}ms</td>
+                            <td>≤ 100ms</td>
+                            <td>
+                                <span class="badge {% if p90 <= 100 %}badge-pass{% else %}badge-fail{% endif %}">
+                                    {% if p90 <= 100 %}PASS{% else %}FAIL{% endif %}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>P95</td>
+                            <td>{{ p95 | round(2) }}ms</td>
+                            <td>≤ 150ms</td>
+                            <td>
+                                <span class="badge {% if p95 <= 150 %}badge-pass{% else %}badge-fail{% endif %}">
+                                    {% if p95 <= 150 %}PASS{% else %}FAIL{% endif %}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>P99</td>
+                            <td>{{ p99 | round(2) }}ms</td>
+                            <td>≤ 200ms</td>
+                            <td>
+                                <span class="badge {% if p99 <= 200 %}badge-pass{% else %}badge-fail{% endif %}">
+                                    {% if p99 <= 200 %}PASS{% else %}FAIL{% endif %}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Max</td>
+                            <td>{{ max_latency | round(2) }}ms</td>
+                            <td>-</td>
+                            <td>-</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- SLA Checks -->
+        <div class="card">
+            <h3 class="card-title">🎯 SLA 检查</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>指标</th>
+                            <th>目标</th>
+                            <th>实际值</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for check in sla_checks %}
+                        <tr>
+                            <td>{{ check.name }}</td>
+                            <td>{{ check.target }}</td>
+                            <td>{{ check.actual }}</td>
+                            <td>
+                                <span class="sla-status {% if check.passed %}pass{% else %}fail{% endif %}">
+                                    {% if check.passed %}PASS{% else %}FAIL{% endif %}
+                                </span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Threshold Checks -->
+        <div class="card">
+            <h3 class="card-title">📋 阈值检查</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>阈值</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for threshold in thresholds %}
+                        <tr>
+                            <td>{{ threshold.name }}</td>
+                            <td>
+                                <span class="badge {% if threshold.passed %}badge-pass{% else %}badge-fail{% endif %}">
+                                    {% if threshold.passed %}PASS{% else %}FAIL{% endif %}
+                                </span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>生成式推荐系统性能测试报告</p>
+            <p>Generated by Performance Testing Suite</p>
+        </div>
+    </div>
+
+    <script>
+        // RPS 趋势图
+        const rpsCtx = document.getElementById('rpsChart').getContext('2d');
+        new Chart(rpsCtx, {
+            type: 'line',
+            data: {
+                labels: {{ rps_trend_labels | tojson }},
+                datasets: [{
+                    label: 'RPS',
+                    data: {{ rps_trend_values | tojson }},
+                    borderColor: '#667eea',
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: '#e2e8f0'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+
+        // 延迟分布图
+        const latencyCtx = document.getElementById('latencyChart').getContext('2d');
+        new Chart(latencyCtx, {
+            type: 'bar',
+            data: {
+                labels: ['P50', 'P90', 'P95', 'P99', 'Max'],
+                datasets: [{
+                    label: '延迟 (ms)',
+                    data: [{{ p50 }}, {{ p90 }}, {{ p95 }}, {{ p99 }}, {{ max_latency }}],
+                    backgroundColor: [
+                        '#10b981',
+                        '#3b82f6',
+                        '#8b5cf6',
+                        '#f59e0b',
+                        '#ef4444'
+                    ],
+                    borderRadius: 8,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: '#e2e8f0'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+

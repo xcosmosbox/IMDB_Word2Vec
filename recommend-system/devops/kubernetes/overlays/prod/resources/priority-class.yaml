@@ -1,0 +1,106 @@
+# 优先级类配置
+# 确保关键服务在资源紧张时优先调度
+---
+# 系统级别优先级 - 用于核心服务
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: recommend-critical
+  labels:
+    app.kubernetes.io/part-of: generative-recsys
+value: 1000000
+globalDefault: false
+description: "Critical priority for recommend system core services"
+preemptionPolicy: PreemptLowerPriority
+---
+# 高优先级 - 用于推理服务
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: recommend-high
+  labels:
+    app.kubernetes.io/part-of: generative-recsys
+value: 500000
+globalDefault: false
+description: "High priority for recommend inference services"
+preemptionPolicy: PreemptLowerPriority
+---
+# 普通优先级 - 用于辅助服务
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: recommend-normal
+  labels:
+    app.kubernetes.io/part-of: generative-recsys
+value: 100000
+globalDefault: false
+description: "Normal priority for recommend auxiliary services"
+preemptionPolicy: PreemptLowerPriority
+---
+# 低优先级 - 用于批处理任务
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: recommend-batch
+  labels:
+    app.kubernetes.io/part-of: generative-recsys
+value: 10000
+globalDefault: false
+description: "Low priority for batch processing jobs"
+preemptionPolicy: Never
+---
+# Deployment 更新 - 应用优先级
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommend-service
+spec:
+  template:
+    spec:
+      priorityClassName: recommend-critical
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  template:
+    spec:
+      priorityClassName: recommend-high
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: item-service
+spec:
+  template:
+    spec:
+      priorityClassName: recommend-high
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ugt-inference
+spec:
+  template:
+    spec:
+      priorityClassName: recommend-critical
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-app
+spec:
+  template:
+    spec:
+      priorityClassName: recommend-normal
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-app
+spec:
+  template:
+    spec:
+      priorityClassName: recommend-normal
+

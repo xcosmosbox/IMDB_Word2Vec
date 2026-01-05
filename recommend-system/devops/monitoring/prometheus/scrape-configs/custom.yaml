@@ -1,0 +1,307 @@
+# =============================================================================
+# 自定义服务抓取配置
+#
+# 用于监控推荐系统的各个服务组件
+# 基于 interfaces.yaml 中定义的服务端口契约
+# =============================================================================
+
+# =============================================================================
+# Go 后端服务监控
+# =============================================================================
+
+# 推荐服务 (recommend-service)
+- job_name: 'recommend-service'
+  static_configs:
+    - targets:
+        - 'recommend-service:9091'
+      labels:
+        env: 'production'
+        team: 'platform'
+  metrics_path: /metrics
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  relabel_configs:
+    - source_labels: []
+      target_label: service
+      replacement: 'recommend-service'
+  metric_relabel_configs:
+    # 删除高基数标签
+    - source_labels: [__name__]
+      regex: 'go_.*'
+      action: drop
+
+# 用户服务 (user-service)
+- job_name: 'user-service'
+  static_configs:
+    - targets:
+        - 'user-service:9092'
+      labels:
+        env: 'production'
+        team: 'platform'
+  metrics_path: /metrics
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  relabel_configs:
+    - source_labels: []
+      target_label: service
+      replacement: 'user-service'
+
+# 物品服务 (item-service)
+- job_name: 'item-service'
+  static_configs:
+    - targets:
+        - 'item-service:9093'
+      labels:
+        env: 'production'
+        team: 'platform'
+  metrics_path: /metrics
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  relabel_configs:
+    - source_labels: []
+      target_label: service
+      replacement: 'item-service'
+
+# =============================================================================
+# Python 推理服务监控
+# =============================================================================
+
+# UGT 推理服务
+- job_name: 'ugt-inference'
+  static_configs:
+    - targets:
+        - 'ugt-inference:9094'
+      labels:
+        env: 'production'
+        team: 'ml'
+  metrics_path: /metrics
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  relabel_configs:
+    - source_labels: []
+      target_label: service
+      replacement: 'ugt-inference'
+    - source_labels: []
+      target_label: model
+      replacement: 'ugt'
+
+# 冷启动 LLM 服务
+- job_name: 'coldstart-llm'
+  static_configs:
+    - targets:
+        - 'coldstart-llm:9095'
+      labels:
+        env: 'production'
+        team: 'ml'
+  metrics_path: /metrics
+  scrape_interval: 30s
+  scrape_timeout: 15s
+  relabel_configs:
+    - source_labels: []
+      target_label: service
+      replacement: 'coldstart-llm'
+
+# =============================================================================
+# 数据库监控
+# =============================================================================
+
+# PostgreSQL Exporter
+- job_name: 'postgres'
+  static_configs:
+    - targets:
+        - 'postgres-exporter:9187'
+      labels:
+        env: 'production'
+        team: 'dba'
+        database: 'recommend'
+  metrics_path: /metrics
+  scrape_interval: 30s
+  scrape_timeout: 15s
+
+# Redis Exporter
+- job_name: 'redis'
+  static_configs:
+    - targets:
+        - 'redis-exporter:9121'
+      labels:
+        env: 'production'
+        team: 'dba'
+        cache_type: 'redis'
+  metrics_path: /metrics
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+# Redis Cluster (多实例)
+- job_name: 'redis-cluster'
+  static_configs:
+    - targets:
+        - 'redis-exporter-0:9121'
+        - 'redis-exporter-1:9121'
+        - 'redis-exporter-2:9121'
+      labels:
+        env: 'production'
+        team: 'dba'
+        cache_type: 'redis-cluster'
+  metrics_path: /metrics
+  scrape_interval: 15s
+
+# Milvus 向量数据库
+- job_name: 'milvus'
+  static_configs:
+    - targets:
+        - 'milvus:9091'
+      labels:
+        env: 'production'
+        team: 'dba'
+        database: 'milvus'
+  metrics_path: /metrics
+  scrape_interval: 30s
+  scrape_timeout: 15s
+
+# =============================================================================
+# GPU 监控
+# =============================================================================
+
+# NVIDIA DCGM Exporter
+- job_name: 'dcgm-exporter'
+  static_configs:
+    - targets:
+        - 'dcgm-exporter:9400'
+      labels:
+        env: 'production'
+        team: 'ml'
+  metrics_path: /metrics
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+# GPU 节点监控 (多节点)
+- job_name: 'gpu-nodes'
+  static_configs:
+    - targets:
+        - 'gpu-node-0:9400'
+        - 'gpu-node-1:9400'
+        - 'gpu-node-2:9400'
+        - 'gpu-node-3:9400'
+      labels:
+        env: 'production'
+        team: 'ml'
+  metrics_path: /metrics
+  scrape_interval: 15s
+
+# =============================================================================
+# 消息队列监控
+# =============================================================================
+
+# Kafka Exporter
+- job_name: 'kafka'
+  static_configs:
+    - targets:
+        - 'kafka-exporter:9308'
+      labels:
+        env: 'production'
+        team: 'platform'
+  metrics_path: /metrics
+  scrape_interval: 30s
+
+# =============================================================================
+# 基础设施监控
+# =============================================================================
+
+# Node Exporter (主机监控)
+- job_name: 'node-exporter'
+  static_configs:
+    - targets:
+        - 'node-exporter:9100'
+      labels:
+        env: 'production'
+  metrics_path: /metrics
+  scrape_interval: 30s
+
+# Blackbox Exporter (HTTP 探测)
+- job_name: 'blackbox-http'
+  metrics_path: /probe
+  params:
+    module: [http_2xx]
+  static_configs:
+    - targets:
+        # 外部服务探测
+        - 'https://api.example.com/health'
+        - 'https://recommend.example.com/health'
+      labels:
+        env: 'production'
+  relabel_configs:
+    - source_labels: [__address__]
+      target_label: __param_target
+    - source_labels: [__param_target]
+      target_label: instance
+    - target_label: __address__
+      replacement: 'blackbox-exporter:9115'
+
+# Blackbox Exporter (TCP 探测)
+- job_name: 'blackbox-tcp'
+  metrics_path: /probe
+  params:
+    module: [tcp_connect]
+  static_configs:
+    - targets:
+        # 数据库端口探测
+        - 'postgres:5432'
+        - 'redis:6379'
+        - 'milvus:19530'
+      labels:
+        env: 'production'
+  relabel_configs:
+    - source_labels: [__address__]
+      target_label: __param_target
+    - source_labels: [__param_target]
+      target_label: instance
+    - target_label: __address__
+      replacement: 'blackbox-exporter:9115'
+
+# =============================================================================
+# 前端应用监控
+# =============================================================================
+
+# 用户端应用 (Nginx)
+- job_name: 'user-app-nginx'
+  static_configs:
+    - targets:
+        - 'user-app:9113'
+      labels:
+        env: 'production'
+        team: 'frontend'
+        app: 'user-app'
+  metrics_path: /metrics
+  scrape_interval: 30s
+
+# 管理后台 (Nginx)
+- job_name: 'admin-app-nginx'
+  static_configs:
+    - targets:
+        - 'admin-app:9113'
+      labels:
+        env: 'production'
+        team: 'frontend'
+        app: 'admin-app'
+  metrics_path: /metrics
+  scrape_interval: 30s
+
+# =============================================================================
+# 开发环境监控
+# =============================================================================
+
+# 开发环境服务 (可选)
+- job_name: 'dev-services'
+  static_configs:
+    - targets:
+        - 'recommend-service-dev:9091'
+        - 'user-service-dev:9092'
+        - 'item-service-dev:9093'
+      labels:
+        env: 'development'
+        team: 'platform'
+  metrics_path: /metrics
+  scrape_interval: 30s
+  # 开发环境可能不稳定，增加超时
+  scrape_timeout: 15s
+

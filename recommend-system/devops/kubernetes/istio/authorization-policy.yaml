@@ -1,0 +1,303 @@
+# Istio AuthorizationPolicy 配置
+# 定义服务间的访问控制策略
+---
+# 默认拒绝策略 - 所有未明确允许的请求都被拒绝
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: deny-all
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  {}  # 空规则 = 拒绝所有
+---
+# 允许来自 Istio Gateway 的入站流量
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingressgateway
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: allow-ingressgateway
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    matchLabels:
+      app: recommend-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+            paths: ["/api/*", "/health/*"]
+---
+# Recommend Service 授权策略
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: recommend-service-policy
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: recommend-service-policy
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    matchLabels:
+      app: recommend-service
+  action: ALLOW
+  rules:
+    # 允许来自 Gateway 的外部请求
+    - from:
+        - source:
+            principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+            paths: ["/api/v1/recommend/*", "/api/v1/health/*"]
+    
+    # 允许内部服务调用
+    - from:
+        - source:
+            namespaces: ["recommend-prod"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+    
+    # 允许 Prometheus 抓取指标
+    - from:
+        - source:
+            namespaces: ["observability"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/metrics"]
+    
+    # 允许健康检查
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/health/*", "/ready", "/live"]
+---
+# User Service 授权策略
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: user-service-policy
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: user-service-policy
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    matchLabels:
+      app: user-service
+  action: ALLOW
+  rules:
+    # 只允许来自 Recommend Service 的调用
+    - from:
+        - source:
+            principals: ["cluster.local/ns/recommend-prod/sa/recommend-service"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+            paths: ["/api/v1/user/*"]
+    
+    # gRPC 调用
+    - from:
+        - source:
+            principals: ["cluster.local/ns/recommend-prod/sa/recommend-service"]
+      to:
+        - operation:
+            ports: ["9091"]
+    
+    # Prometheus 抓取
+    - from:
+        - source:
+            namespaces: ["observability"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/metrics"]
+    
+    # 健康检查
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/health/*"]
+---
+# Item Service 授权策略
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: item-service-policy
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: item-service-policy
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    matchLabels:
+      app: item-service
+  action: ALLOW
+  rules:
+    # 只允许来自 Recommend Service 的调用
+    - from:
+        - source:
+            principals: ["cluster.local/ns/recommend-prod/sa/recommend-service"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+            paths: ["/api/v1/item/*"]
+    
+    # gRPC 调用
+    - from:
+        - source:
+            principals: ["cluster.local/ns/recommend-prod/sa/recommend-service"]
+      to:
+        - operation:
+            ports: ["9092"]
+    
+    # Prometheus 抓取
+    - from:
+        - source:
+            namespaces: ["observability"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/metrics"]
+    
+    # 健康检查
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/health/*"]
+---
+# UGT Inference 授权策略
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: ugt-inference-policy
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: ugt-inference-policy
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    matchLabels:
+      app: ugt-inference
+  action: ALLOW
+  rules:
+    # 只允许来自 Recommend Service 的 gRPC 调用
+    - from:
+        - source:
+            principals: ["cluster.local/ns/recommend-prod/sa/recommend-service"]
+      to:
+        - operation:
+            ports: ["50051"]
+    
+    # Prometheus 抓取
+    - from:
+        - source:
+            namespaces: ["observability"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/metrics"]
+            ports: ["9094"]
+---
+# Frontend Apps 授权策略
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: frontend-apps-policy
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: frontend-apps-policy
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: frontend
+  action: ALLOW
+  rules:
+    # 允许来自 Gateway 的请求
+    - from:
+        - source:
+            principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+      to:
+        - operation:
+            methods: ["GET", "HEAD", "OPTIONS"]
+    
+    # 健康检查
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/health"]
+---
+# Admin App 特殊授权 - 需要 JWT 认证
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: admin-app-jwt-policy
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: admin-app-jwt-policy
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    matchLabels:
+      app: admin-app
+  action: ALLOW
+  rules:
+    # 要求有效的 JWT Token
+    - from:
+        - source:
+            requestPrincipals: ["*"]  # 任何有效的 JWT
+      when:
+        - key: request.auth.claims[role]
+          values: ["admin", "operator"]
+    
+    # 允许健康检查
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/health"]
+---
+# JWT 请求认证
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: jwt-auth
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: jwt-auth
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    matchLabels:
+      app: admin-app
+  jwtRules:
+    - issuer: "https://auth.recommend.example.com"
+      jwksUri: "https://auth.recommend.example.com/.well-known/jwks.json"
+      audiences:
+        - "recommend-admin"
+      forwardOriginalToken: true
+---
+# PeerAuthentication - 强制 mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: strict-mtls
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: strict-mtls
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  mtls:
+    mode: STRICT
+

@@ -1,0 +1,85 @@
+# Istio Gateway 配置
+# 定义服务网格的入口点
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: recommend-gateway
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: recommend-gateway
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    # HTTPS 入口
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: recommend-tls-credential
+      hosts:
+        - "api.recommend.example.com"
+        - "admin.recommend.example.com"
+        - "*.recommend.example.com"
+    
+    # HTTP 入口 (重定向到 HTTPS)
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      tls:
+        httpsRedirect: true
+      hosts:
+        - "api.recommend.example.com"
+        - "admin.recommend.example.com"
+        - "*.recommend.example.com"
+    
+    # gRPC 入口
+    - port:
+        number: 9090
+        name: grpc
+        protocol: GRPC
+      tls:
+        mode: SIMPLE
+        credentialName: recommend-tls-credential
+      hosts:
+        - "grpc.recommend.example.com"
+---
+# 开发环境 Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: recommend-gateway-dev
+  namespace: recommend-dev
+  labels:
+    app.kubernetes.io/name: recommend-gateway-dev
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    # HTTP 入口 (开发环境不强制 HTTPS)
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "dev-api.recommend.example.com"
+        - "dev-admin.recommend.example.com"
+    
+    # HTTPS 入口 (可选)
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: recommend-tls-credential-dev
+      hosts:
+        - "dev-api.recommend.example.com"
+        - "dev-admin.recommend.example.com"
+

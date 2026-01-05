@@ -1,0 +1,167 @@
+# Namespace 配置
+# 为推荐系统创建独立的命名空间，实现资源隔离
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: recommend-system
+  labels:
+    app.kubernetes.io/name: recommend-system
+    app.kubernetes.io/part-of: generative-recsys
+    istio-injection: enabled
+---
+# 开发环境命名空间
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: recommend-dev
+  labels:
+    app.kubernetes.io/name: recommend-system
+    app.kubernetes.io/part-of: generative-recsys
+    environment: development
+    istio-injection: enabled
+---
+# 生产环境命名空间
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: recommend-prod
+  labels:
+    app.kubernetes.io/name: recommend-system
+    app.kubernetes.io/part-of: generative-recsys
+    environment: production
+    istio-injection: enabled
+---
+# ServiceAccount 配置
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recommend-service
+  labels:
+    app.kubernetes.io/name: recommend-service
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: user-service
+  labels:
+    app.kubernetes.io/name: user-service
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: item-service
+  labels:
+    app.kubernetes.io/name: item-service
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ugt-inference
+  labels:
+    app.kubernetes.io/name: ugt-inference
+automountServiceAccountToken: true
+---
+# RBAC 角色绑定
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: recommend-role
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: recommend-role-binding
+subjects:
+  - kind: ServiceAccount
+    name: recommend-service
+roleRef:
+  kind: Role
+  name: recommend-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# 资源配额 - 基础配置
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: recommend-quota
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: "32Gi"
+    limits.cpu: "32"
+    limits.memory: "64Gi"
+    persistentvolumeclaims: "10"
+    pods: "50"
+---
+# LimitRange - 默认资源限制
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: recommend-limits
+spec:
+  limits:
+    - default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      type: Container
+    - max:
+        storage: "10Gi"
+      type: PersistentVolumeClaim
+---
+# NetworkPolicy - 基础网络策略
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: recommend-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: generative-recsys
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # 允许来自同命名空间的流量
+    - from:
+        - podSelector: {}
+    # 允许来自 Istio Gateway 的流量
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+  egress:
+    # 允许访问同命名空间的服务
+    - to:
+        - podSelector: {}
+    # 允许访问 DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    # 允许访问外部服务 (数据库等)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+

@@ -1,0 +1,243 @@
+# Istio DestinationRule 配置
+# 定义服务子集、负载均衡策略和连接池设置
+---
+# Recommend Service DestinationRule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: recommend-dr
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: recommend-dr
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  host: recommend-service
+  trafficPolicy:
+    # 连接池设置
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 5s
+        tcpKeepalive:
+          time: 300s
+          interval: 30s
+          probes: 3
+      http:
+        h2UpgradePolicy: UPGRADE
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 100
+        maxRetries: 3
+        idleTimeout: 60s
+    
+    # 负载均衡策略
+    loadBalancer:
+      simple: LEAST_REQUEST
+      localityLbSetting:
+        enabled: true
+        failover:
+          - from: us-west-1
+            to: us-east-1
+    
+    # 异常检测 (熔断)
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: true
+      consecutiveLocalOriginFailures: 5
+      consecutiveGatewayErrors: 5
+    
+    # TLS 设置
+    tls:
+      mode: ISTIO_MUTUAL
+  
+  # 服务子集定义
+  subsets:
+    - name: stable
+      labels:
+        version: v1
+      trafficPolicy:
+        connectionPool:
+          http:
+            http2MaxRequests: 1000
+    
+    - name: canary
+      labels:
+        version: canary
+      trafficPolicy:
+        connectionPool:
+          http:
+            http2MaxRequests: 100  # 限制金丝雀版本的并发
+    
+    - name: v2
+      labels:
+        version: v2
+      trafficPolicy:
+        connectionPool:
+          http:
+            http2MaxRequests: 500
+---
+# User Service DestinationRule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: user-service-dr
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: user-service-dr
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  host: user-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 3s
+      http:
+        h2UpgradePolicy: UPGRADE
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 500
+        maxRetries: 2
+    
+    loadBalancer:
+      simple: ROUND_ROBIN
+    
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 30
+    
+    tls:
+      mode: ISTIO_MUTUAL
+  
+  subsets:
+    - name: stable
+      labels:
+        version: v1
+---
+# Item Service DestinationRule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: item-service-dr
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: item-service-dr
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  host: item-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 3s
+      http:
+        h2UpgradePolicy: UPGRADE
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 500
+        maxRetries: 2
+    
+    loadBalancer:
+      simple: ROUND_ROBIN
+    
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 30
+    
+    tls:
+      mode: ISTIO_MUTUAL
+  
+  subsets:
+    - name: stable
+      labels:
+        version: v1
+---
+# UGT Inference DestinationRule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: ugt-inference-dr
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: ugt-inference-dr
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  host: ugt-inference
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 20  # GPU 服务连接数有限
+        connectTimeout: 10s
+      http:
+        h2UpgradePolicy: UPGRADE
+        http2MaxRequests: 100
+        maxRetries: 1  # 推理服务减少重试
+    
+    loadBalancer:
+      simple: LEAST_REQUEST  # 选择负载最轻的 GPU Pod
+    
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 30s  # 较长的检测间隔
+      baseEjectionTime: 60s
+      maxEjectionPercent: 25  # 限制驱逐比例
+    
+    tls:
+      mode: ISTIO_MUTUAL
+  
+  subsets:
+    - name: stable
+      labels:
+        version: v1
+---
+# Frontend Apps DestinationRule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: frontend-dr
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: frontend-dr
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  host: user-app
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+    
+    loadBalancer:
+      simple: ROUND_ROBIN
+    
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: admin-app-dr
+  namespace: recommend-prod
+spec:
+  host: admin-app
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 20
+      http:
+        http1MaxPendingRequests: 20
+        http2MaxRequests: 100
+    
+    loadBalancer:
+      simple: ROUND_ROBIN
+

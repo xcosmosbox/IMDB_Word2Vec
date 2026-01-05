@@ -1,0 +1,625 @@
+# =============================================================================
+# PostgreSQL 数据库备份 CronJob
+# 
+# 项目：生成式推荐系统
+# 模块：数据库管理
+# 版本：1.0.0
+# 
+# 备份策略：
+#   - 每日备份：每天凌晨 2:00
+#   - 每周备份：每周日凌晨 3:00
+#   - 每月备份：每月 1 日凌晨 4:00
+# =============================================================================
+
+---
+# 每日备份 CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-daily
+  namespace: recommend-prod
+  labels:
+    app: postgres-backup
+    type: daily
+    component: database
+spec:
+  # 每天凌晨 2:00 执行
+  schedule: "0 2 * * *"
+  timeZone: "Asia/Shanghai"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup
+        type: daily
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 7200  # 2小时超时
+      
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+            type: daily
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-service-account
+          
+          # 初始化容器：等待数据库就绪
+          initContainers:
+            - name: wait-for-postgres
+              image: postgres:15-alpine
+              command:
+                - sh
+                - -c
+                - |
+                  until pg_isready -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER; do
+                    echo "Waiting for PostgreSQL..."
+                    sleep 5
+                  done
+                  echo "PostgreSQL is ready"
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+                - configMapRef:
+                    name: db-config
+          
+          containers:
+            - name: backup
+              image: registry.example.com/recommend-system/db-backup:latest
+              imagePullPolicy: Always
+              
+              command:
+                - /bin/bash
+                - /scripts/backup.sh
+              
+              env:
+                - name: BACKUP_TYPE
+                  value: "daily"
+                - name: RETENTION_DAYS
+                  value: "30"
+                - name: COMPRESSION_LEVEL
+                  value: "6"
+                - name: PARALLEL_JOBS
+                  value: "4"
+                - name: ENABLE_NOTIFICATION
+                  value: "true"
+              
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+                - secretRef:
+                    name: s3-credentials
+                - secretRef:
+                    name: slack-webhook
+                - configMapRef:
+                    name: db-config
+              
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: "512Mi"
+                limits:
+                  cpu: "2000m"
+                  memory: "2Gi"
+              
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+                - name: backup-scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: backup-logs
+                  mountPath: /var/log/backup
+          
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+            - name: backup-scripts
+              configMap:
+                name: backup-scripts
+                defaultMode: 0755
+            - name: backup-logs
+              emptyDir: {}
+          
+          # 节点选择和容忍
+          nodeSelector:
+            workload-type: batch
+          tolerations:
+            - key: "batch-workload"
+              operator: "Equal"
+              value: "true"
+              effect: "NoSchedule"
+
+---
+# 每周备份 CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-weekly
+  namespace: recommend-prod
+  labels:
+    app: postgres-backup
+    type: weekly
+    component: database
+spec:
+  # 每周日凌晨 3:00 执行
+  schedule: "0 3 * * 0"
+  timeZone: "Asia/Shanghai"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 3600
+  
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup
+        type: weekly
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 14400  # 4小时超时
+      
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+            type: weekly
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-service-account
+          
+          initContainers:
+            - name: wait-for-postgres
+              image: postgres:15-alpine
+              command:
+                - sh
+                - -c
+                - |
+                  until pg_isready -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER; do
+                    echo "Waiting for PostgreSQL..."
+                    sleep 5
+                  done
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+                - configMapRef:
+                    name: db-config
+          
+          containers:
+            - name: backup
+              image: registry.example.com/recommend-system/db-backup:latest
+              imagePullPolicy: Always
+              
+              command:
+                - /bin/bash
+                - /scripts/backup.sh
+              
+              env:
+                - name: BACKUP_TYPE
+                  value: "weekly"
+                - name: RETENTION_WEEKLY
+                  value: "12"
+              
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+                - secretRef:
+                    name: s3-credentials
+                - secretRef:
+                    name: slack-webhook
+                - configMapRef:
+                    name: db-config
+              
+              resources:
+                requests:
+                  cpu: "1000m"
+                  memory: "1Gi"
+                limits:
+                  cpu: "4000m"
+                  memory: "4Gi"
+              
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+                - name: backup-scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: backup-logs
+                  mountPath: /var/log/backup
+          
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+            - name: backup-scripts
+              configMap:
+                name: backup-scripts
+                defaultMode: 0755
+            - name: backup-logs
+              emptyDir: {}
+          
+          nodeSelector:
+            workload-type: batch
+
+---
+# 每月备份 CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-monthly
+  namespace: recommend-prod
+  labels:
+    app: postgres-backup
+    type: monthly
+    component: database
+spec:
+  # 每月 1 日凌晨 4:00 执行
+  schedule: "0 4 1 * *"
+  timeZone: "Asia/Shanghai"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  startingDeadlineSeconds: 3600
+  
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup
+        type: monthly
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 21600  # 6小时超时
+      
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+            type: monthly
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-service-account
+          
+          initContainers:
+            - name: wait-for-postgres
+              image: postgres:15-alpine
+              command:
+                - sh
+                - -c
+                - |
+                  until pg_isready -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER; do
+                    echo "Waiting for PostgreSQL..."
+                    sleep 5
+                  done
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+                - configMapRef:
+                    name: db-config
+          
+          containers:
+            - name: backup
+              image: registry.example.com/recommend-system/db-backup:latest
+              imagePullPolicy: Always
+              
+              command:
+                - /bin/bash
+                - /scripts/backup.sh
+              
+              env:
+                - name: BACKUP_TYPE
+                  value: "monthly"
+                - name: RETENTION_MONTHLY
+                  value: "12"
+              
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+                - secretRef:
+                    name: s3-credentials
+                - secretRef:
+                    name: slack-webhook
+                - configMapRef:
+                    name: db-config
+              
+              resources:
+                requests:
+                  cpu: "1000m"
+                  memory: "2Gi"
+                limits:
+                  cpu: "4000m"
+                  memory: "8Gi"
+              
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+                - name: backup-scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: backup-logs
+                  mountPath: /var/log/backup
+          
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+            - name: backup-scripts
+              configMap:
+                name: backup-scripts
+                defaultMode: 0755
+            - name: backup-logs
+              emptyDir: {}
+          
+          nodeSelector:
+            workload-type: batch
+
+---
+# 备份验证 CronJob (每周执行一次)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-verify
+  namespace: recommend-prod
+  labels:
+    app: postgres-backup
+    type: verify
+    component: database
+spec:
+  # 每周一凌晨 5:00 执行
+  schedule: "0 5 * * 1"
+  timeZone: "Asia/Shanghai"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 2
+  
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup
+        type: verify
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 10800  # 3小时超时
+      
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+            type: verify
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-service-account
+          
+          containers:
+            - name: verify
+              image: registry.example.com/recommend-system/db-backup:latest
+              imagePullPolicy: Always
+              
+              command:
+                - /bin/bash
+                - /scripts/verify.sh
+                - "latest"
+                - "--compare"
+              
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+                - secretRef:
+                    name: slack-webhook
+                - configMapRef:
+                    name: db-config
+              
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: "1Gi"
+                limits:
+                  cpu: "2000m"
+                  memory: "4Gi"
+              
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+                - name: backup-scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: backup-logs
+                  mountPath: /var/log/backup
+          
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+            - name: backup-scripts
+              configMap:
+                name: backup-scripts
+                defaultMode: 0755
+            - name: backup-logs
+              emptyDir: {}
+          
+          nodeSelector:
+            workload-type: batch
+
+---
+# 备份清理 CronJob (每天执行一次)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-cleanup
+  namespace: recommend-prod
+  labels:
+    app: postgres-backup
+    type: cleanup
+    component: database
+spec:
+  # 每天凌晨 6:00 执行
+  schedule: "0 6 * * *"
+  timeZone: "Asia/Shanghai"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup
+        type: cleanup
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+            type: cleanup
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-service-account
+          
+          containers:
+            - name: cleanup
+              image: registry.example.com/recommend-system/db-backup:latest
+              imagePullPolicy: Always
+              
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -e
+                  echo "Starting backup cleanup..."
+                  
+                  # 清理本地过期备份
+                  find /backups/daily -name "*.sql.gz" -mtime +30 -delete -print
+                  find /backups/weekly -name "*.sql.gz" -mtime +84 -delete -print
+                  find /backups/monthly -name "*.sql.gz" -mtime +365 -delete -print
+                  
+                  # 清理孤立的校验和文件
+                  find /backups -name "*.sha256" | while read f; do
+                    [ ! -f "${f%.sha256}" ] && rm -v "$f"
+                  done
+                  
+                  # 清理旧日志
+                  find /var/log/backup -name "*.log" -mtime +7 -delete
+                  
+                  # 清理 S3 过期备份（如果配置了）
+                  if [ -n "$S3_BUCKET" ]; then
+                    echo "Cleaning S3 backups..."
+                    # 使用 S3 生命周期策略处理，这里只做日志记录
+                    aws s3 ls "s3://$S3_BUCKET/$S3_PREFIX/" --recursive | wc -l
+                  fi
+                  
+                  echo "Cleanup completed"
+              
+              envFrom:
+                - secretRef:
+                    name: s3-credentials
+              
+              env:
+                - name: S3_PREFIX
+                  value: "backups/postgres"
+              
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+                - name: backup-logs
+                  mountPath: /var/log/backup
+          
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+            - name: backup-logs
+              emptyDir: {}
+
+---
+# PersistentVolumeClaim for backups
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: recommend-prod
+  labels:
+    app: postgres-backup
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-storage
+  resources:
+    requests:
+      storage: 500Gi
+
+---
+# ConfigMap for backup scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-scripts
+  namespace: recommend-prod
+  labels:
+    app: postgres-backup
+data:
+  backup.sh: |
+    # 此处内容来自 backup.sh 文件
+    # 实际部署时应该通过 CI/CD 流水线从源文件生成
+    
+  restore.sh: |
+    # 此处内容来自 restore.sh 文件
+    
+  verify.sh: |
+    # 此处内容来自 verify.sh 文件
+
+---
+# ServiceAccount for backup jobs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-service-account
+  namespace: recommend-prod
+  labels:
+    app: postgres-backup
+
+---
+# Role for backup operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backup-role
+  namespace: recommend-prod
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-role-binding
+  namespace: recommend-prod
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: backup-role
+subjects:
+  - kind: ServiceAccount
+    name: backup-service-account
+    namespace: recommend-prod
+

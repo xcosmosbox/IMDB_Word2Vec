@@ -1,0 +1,171 @@
+# =============================================================================
+# Loki 主配置文件
+# 
+# 日志聚合系统配置，符合 interfaces.yaml 中的日志接口契约
+# 支持日志收集、存储、查询和告警
+# =============================================================================
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: info
+  grpc_server_max_recv_msg_size: 104857600  # 100MB
+  grpc_server_max_send_msg_size: 104857600  # 100MB
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+# =============================================================================
+# Schema 配置
+# =============================================================================
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v12
+      index:
+        prefix: index_
+        period: 24h
+
+# =============================================================================
+# 存储配置
+# =============================================================================
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /loki/boltdb-shipper-active
+    cache_location: /loki/boltdb-shipper-cache
+    cache_ttl: 24h
+    shared_store: filesystem
+  filesystem:
+    directory: /loki/chunks
+
+# =============================================================================
+# 压缩器配置
+# =============================================================================
+compactor:
+  working_directory: /loki/boltdb-shipper-compactor
+  shared_store: filesystem
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+
+# =============================================================================
+# 限制配置
+# =============================================================================
+limits_config:
+  enforce_metric_name: false
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h  # 7天
+  max_entries_limit_per_query: 5000
+  max_query_series: 500
+  max_query_parallelism: 32
+  
+  # 摄入限制
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  per_stream_rate_limit: 5MB
+  per_stream_rate_limit_burst: 15MB
+  
+  # 查询限制
+  max_query_length: 721h  # 30天
+  max_query_lookback: 720h
+
+# =============================================================================
+# Chunk 存储配置
+# =============================================================================
+chunk_store_config:
+  max_look_back_period: 720h  # 30天
+
+# =============================================================================
+# 表管理器配置 (保留策略)
+# =============================================================================
+table_manager:
+  retention_deletes_enabled: true
+  retention_period: 720h  # 30天
+
+# =============================================================================
+# 摄入器配置
+# =============================================================================
+ingester:
+  chunk_idle_period: 30m
+  chunk_block_size: 262144
+  chunk_retain_period: 1m
+  max_transfer_retries: 0
+  wal:
+    enabled: true
+    dir: /loki/wal
+    flush_on_shutdown: true
+    replay_memory_ceiling: 1GB
+  lifecycler:
+    address: 127.0.0.1
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+    final_sleep: 0s
+
+# =============================================================================
+# 查询器配置
+# =============================================================================
+querier:
+  max_concurrent: 10
+  query_timeout: 5m
+  tail_max_duration: 1h
+  engine:
+    timeout: 5m
+    max_look_back_period: 720h
+
+# =============================================================================
+# 查询前端配置
+# =============================================================================
+query_range:
+  align_queries_with_step: true
+  max_retries: 5
+  cache_results: true
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+# =============================================================================
+# 规则器配置 (告警)
+# =============================================================================
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules-temp
+  alertmanager_url: http://alertmanager:9093
+  ring:
+    kvstore:
+      store: inmemory
+  enable_api: true
+  enable_alertmanager_v2: true
+  evaluation_interval: 1m
+
+# =============================================================================
+# 分析配置
+# =============================================================================
+analytics:
+  reporting_enabled: false
+
+# =============================================================================
+# Tracing 配置 (可选)
+# =============================================================================
+tracing:
+  enabled: false
+

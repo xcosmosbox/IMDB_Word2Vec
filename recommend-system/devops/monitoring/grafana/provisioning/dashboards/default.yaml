@@ -1,0 +1,49 @@
+# =============================================================================
+# Grafana 仪表板配置
+#
+# 自动加载仪表板配置
+# =============================================================================
+
+apiVersion: 1
+
+# 仪表板提供者配置
+providers:
+  # 推荐系统仪表板
+  - name: 'recommend-system'
+    orgId: 1
+    folder: '推荐系统'
+    folderUid: 'recommend-system'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
+
+  # 基础设施仪表板
+  - name: 'infrastructure'
+    orgId: 1
+    folder: '基础设施'
+    folderUid: 'infrastructure'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/infrastructure
+      foldersFromFilesStructure: false
+
+  # 业务指标仪表板
+  - name: 'business'
+    orgId: 1
+    folder: '业务指标'
+    folderUid: 'business'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/business
+      foldersFromFilesStructure: false
+

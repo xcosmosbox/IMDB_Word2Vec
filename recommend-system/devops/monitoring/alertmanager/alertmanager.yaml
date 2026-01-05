@@ -1,0 +1,292 @@
+# =============================================================================
+# AlertManager 配置
+#
+# 生成式推荐系统告警管理配置
+# 支持 Slack、PagerDuty、邮件等多种告警渠道
+# =============================================================================
+
+global:
+  # 告警解决超时
+  resolve_timeout: 5m
+  
+  # Slack Webhook URL (通过环境变量或 Secret 注入)
+  slack_api_url: '{{ .SlackWebhookURL }}'
+  
+  # SMTP 配置 (邮件告警)
+  smtp_smarthost: 'smtp.example.com:587'
+  smtp_from: 'alertmanager@example.com'
+  smtp_auth_username: '{{ .SMTPUsername }}'
+  smtp_auth_password: '{{ .SMTPPassword }}'
+  smtp_require_tls: true
+
+# 告警模板
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# 告警抑制规则
+inhibit_rules:
+  # 如果服务 Down，抑制该服务的其他告警
+  - source_match:
+      alertname: 'ServiceDown'
+    target_match_re:
+      alertname: '.*'
+    equal: ['service']
+  
+  # 如果有 Critical 级别告警，抑制同服务的 Warning 告警
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['service', 'alertname']
+  
+  # 如果节点 Down，抑制该节点上的 Pod 告警
+  - source_match:
+      alertname: 'NodeDown'
+    target_match_re:
+      alertname: '.*'
+    equal: ['node']
+  
+  # PostgreSQL Down 时抑制 PostgreSQL 相关告警
+  - source_match:
+      alertname: 'PostgresDown'
+    target_match_re:
+      alertname: 'Postgres.*'
+    equal: ['instance']
+  
+  # Redis Down 时抑制 Redis 相关告警
+  - source_match:
+      alertname: 'RedisDown'
+    target_match_re:
+      alertname: 'Redis.*'
+    equal: ['instance']
+
+# 路由配置
+route:
+  # 默认接收者
+  receiver: 'default-receiver'
+  
+  # 分组依据
+  group_by: ['alertname', 'severity', 'service']
+  
+  # 分组等待时间 (聚合同组告警)
+  group_wait: 30s
+  
+  # 同组告警发送间隔
+  group_interval: 5m
+  
+  # 重复发送间隔
+  repeat_interval: 4h
+  
+  # 子路由
+  routes:
+    # ==========================================================================
+    # Critical 告警 - 立即通知 + PagerDuty
+    # ==========================================================================
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 1h
+      continue: false
+    
+    # ==========================================================================
+    # 推理服务告警 - ML 团队
+    # ==========================================================================
+    - match:
+        team: ml
+      receiver: 'ml-team-alerts'
+      group_wait: 30s
+      repeat_interval: 2h
+      routes:
+        - match:
+            severity: critical
+          receiver: 'ml-team-critical'
+          group_wait: 10s
+          repeat_interval: 30m
+    
+    # ==========================================================================
+    # 数据库告警 - DBA 团队
+    # ==========================================================================
+    - match:
+        team: dba
+      receiver: 'dba-team-alerts'
+      group_wait: 30s
+      repeat_interval: 2h
+      routes:
+        - match:
+            severity: critical
+          receiver: 'dba-team-critical'
+          group_wait: 10s
+          repeat_interval: 30m
+    
+    # ==========================================================================
+    # 业务告警 - 产品团队
+    # ==========================================================================
+    - match_re:
+        alertname: 'Low.*CTR|High.*CacheHitMiss|RecommendationRequest.*'
+      receiver: 'business-alerts'
+      group_wait: 5m
+      repeat_interval: 6h
+    
+    # ==========================================================================
+    # 安全告警 - 安全团队
+    # ==========================================================================
+    - match:
+        team: security
+      receiver: 'security-alerts'
+      group_wait: 10s
+      repeat_interval: 1h
+    
+    # ==========================================================================
+    # Warning 告警
+    # ==========================================================================
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 1m
+      repeat_interval: 4h
+    
+    # ==========================================================================
+    # Info 告警 (仅记录，不发送)
+    # ==========================================================================
+    - match:
+        severity: info
+      receiver: 'null-receiver'
+
+# 接收者配置
+receivers:
+  # ==========================================================================
+  # 默认接收者
+  # ==========================================================================
+  - name: 'default-receiver'
+    slack_configs:
+      - channel: '#alerts'
+        send_resolved: true
+        title: '{{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        color: '{{ template "slack.color" . }}'
+        actions:
+          - type: button
+            text: '查看 Dashboard'
+            url: '{{ template "slack.dashboard_url" . }}'
+          - type: button
+            text: '查看 Runbook'
+            url: '{{ template "slack.runbook_url" . }}'
+  
+  # ==========================================================================
+  # Critical 告警接收者
+  # ==========================================================================
+  - name: 'critical-alerts'
+    slack_configs:
+      - channel: '#alerts-critical'
+        send_resolved: true
+        title: '🚨 {{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        color: 'danger'
+        actions:
+          - type: button
+            text: '📊 Dashboard'
+            url: '{{ template "slack.dashboard_url" . }}'
+          - type: button
+            text: '📖 Runbook'
+            url: '{{ template "slack.runbook_url" . }}'
+    pagerduty_configs:
+      - service_key: '{{ .PagerDutyServiceKey }}'
+        severity: critical
+        description: '{{ template "pagerduty.description" . }}'
+        details:
+          firing: '{{ template "pagerduty.firing" . }}'
+          resolved: '{{ template "pagerduty.resolved" . }}'
+    email_configs:
+      - to: 'oncall@example.com'
+        send_resolved: true
+        html: '{{ template "email.html" . }}'
+        headers:
+          Subject: '[CRITICAL] {{ template "email.subject" . }}'
+  
+  # ==========================================================================
+  # Warning 告警接收者
+  # ==========================================================================
+  - name: 'warning-alerts'
+    slack_configs:
+      - channel: '#alerts-warning'
+        send_resolved: true
+        title: '⚠️ {{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        color: 'warning'
+  
+  # ==========================================================================
+  # ML 团队告警
+  # ==========================================================================
+  - name: 'ml-team-alerts'
+    slack_configs:
+      - channel: '#ml-alerts'
+        send_resolved: true
+        title: '🤖 {{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+  
+  - name: 'ml-team-critical'
+    slack_configs:
+      - channel: '#ml-alerts'
+        send_resolved: true
+        title: '🚨 [ML Critical] {{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        color: 'danger'
+    pagerduty_configs:
+      - service_key: '{{ .MLPagerDutyServiceKey }}'
+        severity: critical
+  
+  # ==========================================================================
+  # DBA 团队告警
+  # ==========================================================================
+  - name: 'dba-team-alerts'
+    slack_configs:
+      - channel: '#dba-alerts'
+        send_resolved: true
+        title: '🗄️ {{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+  
+  - name: 'dba-team-critical'
+    slack_configs:
+      - channel: '#dba-alerts'
+        send_resolved: true
+        title: '🚨 [DB Critical] {{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        color: 'danger'
+    pagerduty_configs:
+      - service_key: '{{ .DBAPagerDutyServiceKey }}'
+        severity: critical
+  
+  # ==========================================================================
+  # 业务告警
+  # ==========================================================================
+  - name: 'business-alerts'
+    slack_configs:
+      - channel: '#business-metrics'
+        send_resolved: true
+        title: '📊 {{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        color: '{{ template "slack.color" . }}'
+  
+  # ==========================================================================
+  # 安全告警
+  # ==========================================================================
+  - name: 'security-alerts'
+    slack_configs:
+      - channel: '#security-alerts'
+        send_resolved: true
+        title: '🔒 {{ template "slack.title" . }}'
+        text: '{{ template "slack.text" . }}'
+        color: 'danger'
+    email_configs:
+      - to: 'security@example.com'
+        send_resolved: true
+        headers:
+          Subject: '[SECURITY] {{ template "email.subject" . }}'
+  
+  # ==========================================================================
+  # 空接收者 (用于忽略某些告警)
+  # ==========================================================================
+  - name: 'null-receiver'
+

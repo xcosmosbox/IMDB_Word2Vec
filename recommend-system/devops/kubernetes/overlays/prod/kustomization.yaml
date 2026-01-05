@@ -1,0 +1,96 @@
+# Production Environment Kustomization
+# 生产环境特定配置
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: recommend-system-prod
+
+# 命名空间
+namespace: recommend-prod
+
+# 名称前缀
+namePrefix: prod-
+
+# 通用标签
+commonLabels:
+  environment: production
+  tier: prod
+
+# 通用注解
+commonAnnotations:
+  app.kubernetes.io/environment: production
+  config.kubernetes.io/created-by: kustomize
+
+# 引用基础配置
+resources:
+  - ../../base
+  - canary.yaml
+  - resources/priority-class.yaml
+  - resources/network-policy-prod.yaml
+
+# 补丁 - Strategic Merge Patches
+patches:
+  - path: patches/deployment-resources.yaml
+  - path: patches/deployment-replicas.yaml
+  - path: patches/hpa-scaling.yaml
+  - path: patches/configmap-prod.yaml
+  - path: patches/security-context.yaml
+
+# 镜像配置 - 生产环境使用固定版本
+images:
+  - name: registry.example.com/recommend/recommend-service
+    newName: registry.example.com/recommend/recommend-service
+    newTag: v1.0.0
+  - name: registry.example.com/recommend/user-service
+    newName: registry.example.com/recommend/user-service
+    newTag: v1.0.0
+  - name: registry.example.com/recommend/item-service
+    newName: registry.example.com/recommend/item-service
+    newTag: v1.0.0
+  - name: registry.example.com/recommend/ugt-inference
+    newName: registry.example.com/recommend/ugt-inference
+    newTag: v1.0.0
+  - name: registry.example.com/recommend/user-app
+    newName: registry.example.com/recommend/user-app
+    newTag: v1.0.0
+  - name: registry.example.com/recommend/admin-app
+    newName: registry.example.com/recommend/admin-app
+    newTag: v1.0.0
+
+# ConfigMap 覆盖
+configMapGenerator:
+  - name: app-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=info
+      - ENABLE_TRACING=true
+      - TRACING_SAMPLE_RATE=0.01
+      - FEATURE_NEW_ALGORITHM=false
+      - RATE_LIMIT_RPS=10000
+  - name: version-config
+    behavior: replace
+    literals:
+      - VERSION=v1.0.0
+      - BUILD_DATE=2025-01-05
+      - GIT_COMMIT=release-v1.0.0
+
+# 副本数调整 (由 HPA 管理)
+replicas:
+  - name: recommend-service
+    count: 5
+  - name: user-service
+    count: 3
+  - name: item-service
+    count: 3
+  - name: ugt-inference
+    count: 2
+  - name: user-app
+    count: 3
+  - name: admin-app
+    count: 2
+
+# 生成选项
+generatorOptions:
+  disableNameSuffixHash: true
+

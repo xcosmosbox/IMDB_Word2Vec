@@ -1,0 +1,343 @@
+# =============================================================================
+# Promtail 配置文件
+# 
+# 日志收集代理配置，符合 interfaces.yaml 中的日志格式契约
+# 支持 Kubernetes Pod 日志收集和 JSON 解析
+# =============================================================================
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /tmp/positions.yaml
+  sync_period: 10s
+  ignore_invalid_yaml: true
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    tenant_id: recommend
+    batchwait: 1s
+    batchsize: 1048576  # 1MB
+    timeout: 10s
+    
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+    
+    external_labels:
+      cluster: recommend-prod
+      environment: production
+
+# =============================================================================
+# 抓取配置
+# =============================================================================
+scrape_configs:
+  # ===========================================================================
+  # Kubernetes Pod 日志
+  # ===========================================================================
+  - job_name: kubernetes-pods
+    kubernetes_sd_configs:
+      - role: pod
+    
+    relabel_configs:
+      # 只收集有 app 标签的 Pod
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: .+
+      
+      # 排除系统命名空间
+      - source_labels: [__meta_kubernetes_namespace]
+        action: drop
+        regex: (kube-system|kube-public|kube-node-lease)
+      
+      # 设置命名空间标签
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      
+      # 设置 Pod 名称标签
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: pod
+      
+      # 设置容器名称标签
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        action: replace
+        target_label: container
+      
+      # 设置应用标签
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
+      
+      # 设置环境标签
+      - source_labels: [__meta_kubernetes_pod_label_env]
+        action: replace
+        target_label: env
+      
+      # 设置节点名称
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        action: replace
+        target_label: node
+      
+      # 设置日志路径
+      - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
+        target_label: __path__
+        separator: /
+        replacement: /var/log/pods/*$1/$2/*.log
+    
+    pipeline_stages:
+      # 解析 Docker/CRI 日志格式
+      - cri: {}
+      
+      # 解析 JSON 日志 (符合 interfaces.yaml 契约)
+      - json:
+          expressions:
+            level: level
+            message: message
+            service: service
+            trace_id: trace_id
+            timestamp: timestamp
+            duration_ms: duration_ms
+            user_id: user_id
+            request_id: request_id
+            error_stack: error_stack
+      
+      # 设置时间戳
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - "2006-01-02T15:04:05.000Z07:00"
+            - "2006-01-02T15:04:05Z07:00"
+            - "2006-01-02 15:04:05"
+      
+      # 设置日志级别标签
+      - labels:
+          level:
+          service:
+          trace_id:
+      
+      # 标准化日志级别
+      - template:
+          source: level
+          template: '{{ ToUpper .Value }}'
+      
+      # 过滤 DEBUG 日志（生产环境）
+      - match:
+          selector: '{level="DEBUG"}'
+          action: drop
+          drop_counter_reason: debug_logs_filtered
+      
+      # 提取错误堆栈（多行日志）
+      - multiline:
+          firstline: '^\{"timestamp":'
+          max_wait_time: 3s
+          max_lines: 128
+      
+      # 输出格式
+      - output:
+          source: message
+
+  # ===========================================================================
+  # Go 后端服务日志
+  # ===========================================================================
+  - job_name: go-services
+    kubernetes_sd_configs:
+      - role: pod
+    
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: (recommend-service|user-service|item-service)
+      
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
+      
+      - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
+        target_label: __path__
+        separator: /
+        replacement: /var/log/pods/*$1/$2/*.log
+    
+    pipeline_stages:
+      - cri: {}
+      
+      - json:
+          expressions:
+            level: level
+            message: message
+            service: service
+            trace_id: trace_id
+            timestamp: timestamp
+            duration_ms: duration_ms
+            user_id: user_id
+            request_id: request_id
+            method: method
+            path: path
+            status_code: status_code
+      
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      
+      - labels:
+          level:
+          service:
+          trace_id:
+          method:
+          status_code:
+      
+      - match:
+          selector: '{level="DEBUG"}'
+          action: drop
+          drop_counter_reason: debug_logs_filtered
+      
+      # 提取指标
+      - metrics:
+          log_lines_total:
+            type: Counter
+            description: "Total log lines processed"
+            config:
+              match_all: true
+              action: inc
+          error_lines_total:
+            type: Counter
+            description: "Error log lines"
+            source: level
+            config:
+              value: ERROR
+              action: inc
+          request_duration:
+            type: Histogram
+            description: "Request duration from logs"
+            source: duration_ms
+            config:
+              buckets: [10, 50, 100, 200, 500, 1000, 2000, 5000]
+
+  # ===========================================================================
+  # Python 推理服务日志
+  # ===========================================================================
+  - job_name: inference-logs
+    kubernetes_sd_configs:
+      - role: pod
+    
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: ugt-inference
+      
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
+      
+      - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
+        target_label: __path__
+        separator: /
+        replacement: /var/log/pods/*$1/$2/*.log
+    
+    pipeline_stages:
+      - cri: {}
+      
+      - json:
+          expressions:
+            level: level
+            message: message
+            service: service
+            trace_id: trace_id
+            timestamp: timestamp
+            model: model
+            batch_size: batch_size
+            latency_ms: latency_ms
+            gpu_memory_mb: gpu_memory_mb
+            status: status
+      
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      
+      - labels:
+          level:
+          service:
+          trace_id:
+          model:
+          status:
+      
+      - match:
+          selector: '{level="DEBUG"}'
+          action: drop
+          drop_counter_reason: debug_logs_filtered
+      
+      - metrics:
+          inference_log_lines_total:
+            type: Counter
+            description: "Total inference log lines"
+            config:
+              match_all: true
+              action: inc
+          inference_latency:
+            type: Histogram
+            description: "Inference latency from logs"
+            source: latency_ms
+            config:
+              buckets: [5, 10, 25, 50, 100, 250, 500, 1000]
+
+  # ===========================================================================
+  # 系统日志
+  # ===========================================================================
+  - job_name: system-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: system
+          __path__: /var/log/syslog
+    
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+)\s+(?P<host>\S+)\s+(?P<program>\S+?)(\[(?P<pid>\d+)\])?:\s+(?P<message>.*)$'
+      
+      - timestamp:
+          source: timestamp
+          format: "Jan 02 15:04:05"
+      
+      - labels:
+          host:
+          program:
+
+  # ===========================================================================
+  # Journal 日志
+  # ===========================================================================
+  - job_name: journal
+    journal:
+      max_age: 12h
+      labels:
+        job: systemd-journal
+    
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: 'unit'
+      
+      - source_labels: ['__journal__hostname']
+        target_label: 'host'
+    
+    pipeline_stages:
+      - match:
+          selector: '{unit=~"kubelet.service|docker.service|containerd.service"}'
+          stages:
+            - regex:
+                expression: '(?P<level>I|W|E|F)(?P<timestamp>\d{4} \d{2}:\d{2}:\d{2}.\d+)'
+            - labels:
+                level:
+

@@ -1,0 +1,24 @@
+# Label Transformer 配置
+# 定义标签转换规则
+commonLabels:
+  - path: spec/selector/matchLabels
+    create: true
+    version: apps/v1
+    kind: Deployment
+  - path: spec/selector/matchLabels
+    create: true
+    version: apps/v1
+    kind: StatefulSet
+  - path: spec/selector
+    create: true
+    version: v1
+    kind: Service
+  - path: spec/template/metadata/labels
+    create: true
+    version: apps/v1
+    kind: Deployment
+  - path: spec/template/metadata/labels
+    create: true
+    version: apps/v1
+    kind: StatefulSet
+

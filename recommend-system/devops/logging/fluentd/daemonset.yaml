@@ -1,0 +1,356 @@
+# =============================================================================
+# Fluentd Kubernetes DaemonSet 部署清单
+# 
+# 在每个节点上运行 Fluentd 收集日志
+# 作为 Promtail 的备选方案
+# =============================================================================
+
+---
+# ConfigMap - Fluentd 主配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: recommend-prod
+  labels:
+    app: fluentd
+    component: logging
+data:
+  fluent.conf: |
+    # 系统设置
+    <system>
+      log_level info
+      workers 2
+      root_dir /var/log/fluentd
+    </system>
+
+    # Kubernetes 容器日志
+    <source>
+      @type tail
+      @id kubernetes-containers
+      path /var/log/containers/*.log
+      pos_file /var/log/fluentd-containers.log.pos
+      tag kubernetes.*
+      read_from_head true
+      <parse>
+        @type json
+        time_key time
+        time_format %Y-%m-%dT%H:%M:%S.%NZ
+      </parse>
+    </source>
+
+    # 添加 Kubernetes 元数据
+    <filter kubernetes.**>
+      @type kubernetes_metadata
+      kubernetes_url https://kubernetes.default.svc
+      verify_ssl true
+      ca_file /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      bearer_token_file /var/run/secrets/kubernetes.io/serviceaccount/token
+    </filter>
+
+    # 解析嵌套 JSON
+    <filter kubernetes.**>
+      @type parser
+      key_name log
+      reserve_data true
+      remove_key_name_field true
+      emit_invalid_record_to_error false
+      <parse>
+        @type json
+      </parse>
+    </filter>
+
+    # 添加自定义字段
+    <filter **>
+      @type record_transformer
+      enable_ruby true
+      <record>
+        cluster "recommend-prod"
+        environment "production"
+        timestamp ${record["timestamp"] || time.strftime('%Y-%m-%dT%H:%M:%S.%LZ')}
+        level ${record["level"] || "INFO"}
+        service ${record["service"] || record.dig("kubernetes", "labels", "app") || "unknown"}
+        trace_id ${record["trace_id"] || ""}
+        message ${record["message"] || record["log"] || ""}
+      </record>
+    </filter>
+
+    # 排除系统命名空间
+    <filter kubernetes.**>
+      @type grep
+      <exclude>
+        key $.kubernetes.namespace_name
+        pattern /^(kube-system|kube-public|kube-node-lease)$/
+      </exclude>
+    </filter>
+
+    # 过滤 DEBUG 日志
+    <filter **>
+      @type grep
+      <exclude>
+        key level
+        pattern /^DEBUG$/
+      </exclude>
+    </filter>
+
+    # 输出到 Loki
+    <match **>
+      @type loki
+      url "http://loki:3100"
+      <label>
+        app $.kubernetes.labels.app
+        namespace $.kubernetes.namespace_name
+        pod $.kubernetes.pod_name
+        container $.kubernetes.container_name
+        level $.level
+        service $.service
+      </label>
+      line_format json
+      <buffer>
+        @type file
+        path /var/log/fluentd-buffers/loki
+        flush_mode interval
+        flush_interval 5s
+        flush_thread_count 2
+        retry_type exponential_backoff
+        retry_wait 1s
+        retry_max_interval 60s
+        retry_forever true
+        chunk_limit_size 8MB
+        total_limit_size 1GB
+      </buffer>
+    </match>
+
+---
+# ConfigMap - Fluentd 解析器配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-parsers
+  namespace: recommend-prod
+  labels:
+    app: fluentd
+    component: logging
+data:
+  parsers.conf: |
+    <parse>
+      @type json
+      time_key timestamp
+      time_format %Y-%m-%dT%H:%M:%S.%NZ
+      keep_time_key true
+    </parse>
+
+---
+# ServiceAccount - Fluentd
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentd
+  namespace: recommend-prod
+  labels:
+    app: fluentd
+    component: logging
+
+---
+# ClusterRole - Fluentd
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluentd
+  labels:
+    app: fluentd
+    component: logging
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - pods/logs
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding - Fluentd
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluentd
+  labels:
+    app: fluentd
+    component: logging
+subjects:
+  - kind: ServiceAccount
+    name: fluentd
+    namespace: recommend-prod
+roleRef:
+  kind: ClusterRole
+  name: fluentd
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# DaemonSet - Fluentd
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: recommend-prod
+  labels:
+    app: fluentd
+    component: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: fluentd
+        component: logging
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "24231"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: fluentd
+      
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      
+      initContainers:
+        - name: create-dirs
+          image: busybox:1.35
+          command: ['sh', '-c', 'mkdir -p /var/log/fluentd /var/log/fluentd-buffers/loki']
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+      
+      containers:
+        - name: fluentd
+          image: grafana/fluent-plugin-loki:2.9.3
+          imagePullPolicy: IfNotPresent
+          
+          env:
+            - name: FLUENTD_CONF
+              value: "fluent.conf"
+            - name: FLUENT_ELASTICSEARCH_LOGSTASH_PREFIX
+              value: "recommend"
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          
+          ports:
+            - name: http-metrics
+              containerPort: 24231
+              protocol: TCP
+          
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          
+          volumeMounts:
+            - name: config
+              mountPath: /fluentd/etc/fluent.conf
+              subPath: fluent.conf
+            - name: parsers
+              mountPath: /fluentd/etc/parsers.conf
+              subPath: parsers.conf
+            - name: varlog
+              mountPath: /var/log
+            - name: containers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: buffer
+              mountPath: /var/log/fluentd-buffers
+          
+          livenessProbe:
+            httpGet:
+              path: /fluentd.healthcheck?json=%7B%22ping%22%3A+%22pong%22%7D
+              port: 9880
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /fluentd.healthcheck?json=%7B%22ping%22%3A+%22pong%22%7D
+              port: 9880
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      
+      terminationGracePeriodSeconds: 30
+      
+      volumes:
+        - name: config
+          configMap:
+            name: fluentd-config
+        - name: parsers
+          configMap:
+            name: fluentd-parsers
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: containers
+          hostPath:
+            path: /var/lib/docker/containers
+        - name: buffer
+          emptyDir: {}
+
+---
+# Service - Fluentd Metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: fluentd
+  namespace: recommend-prod
+  labels:
+    app: fluentd
+    component: logging
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http-metrics
+      port: 24231
+      targetPort: 24231
+      protocol: TCP
+  selector:
+    app: fluentd
+
+---
+# ServiceMonitor - Prometheus 监控
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fluentd
+  namespace: recommend-prod
+  labels:
+    app: fluentd
+    component: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  endpoints:
+    - port: http-metrics
+      path: /metrics
+      interval: 30s
+  namespaceSelector:
+    matchNames:
+      - recommend-prod
+

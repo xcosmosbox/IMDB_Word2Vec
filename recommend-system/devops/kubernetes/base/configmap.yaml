@@ -1,0 +1,226 @@
+# ConfigMap 配置
+# 存储应用配置、数据库连接信息等非敏感数据
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  labels:
+    app.kubernetes.io/name: app-config
+    app.kubernetes.io/part-of: generative-recsys
+data:
+  # 日志配置
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  
+  # 链路追踪配置
+  ENABLE_TRACING: "true"
+  TRACING_ENDPOINT: "http://jaeger-collector.observability:14268/api/traces"
+  TRACING_SAMPLE_RATE: "0.1"
+  
+  # 缓存配置
+  CACHE_TTL: "300"
+  CACHE_MAX_SIZE: "10000"
+  CACHE_EVICTION_POLICY: "lru"
+  
+  # 限流配置
+  RATE_LIMIT_RPS: "1000"
+  RATE_LIMIT_BURST: "2000"
+  RATE_LIMIT_ENABLED: "true"
+  
+  # 特性开关
+  FEATURE_NEW_ALGORITHM: "false"
+  FEATURE_AB_TEST: "true"
+  FEATURE_COLD_START_LLM: "true"
+  FEATURE_SEMANTIC_ID: "true"
+  
+  # 服务发现配置
+  SERVICE_DISCOVERY_TYPE: "kubernetes"
+  HEALTH_CHECK_INTERVAL: "10s"
+  
+  # 推荐服务配置
+  RECOMMEND_BATCH_SIZE: "32"
+  RECOMMEND_TOP_K: "20"
+  RECOMMEND_TIMEOUT_MS: "100"
+  
+  # 多模态配置
+  MULTIMODAL_ENABLED: "true"
+  SEMANTIC_ID_LEVELS: "3"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-config
+  labels:
+    app.kubernetes.io/name: db-config
+    app.kubernetes.io/part-of: generative-recsys
+data:
+  # PostgreSQL 配置
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "recommend"
+  POSTGRES_MAX_CONNECTIONS: "50"
+  POSTGRES_IDLE_TIMEOUT: "300"
+  POSTGRES_SSL_MODE: "prefer"
+  
+  # Redis 配置
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_MAX_CONNECTIONS: "100"
+  REDIS_TIMEOUT: "5s"
+  REDIS_CLUSTER_ENABLED: "false"
+  
+  # Milvus 向量数据库配置
+  MILVUS_HOST: "milvus-service"
+  MILVUS_PORT: "19530"
+  MILVUS_COLLECTION: "semantic_embeddings"
+  MILVUS_INDEX_TYPE: "IVF_FLAT"
+  MILVUS_METRIC_TYPE: "IP"
+  MILVUS_NLIST: "1024"
+  
+  # Kafka 配置
+  KAFKA_BROKERS: "kafka-0.kafka:9092,kafka-1.kafka:9092,kafka-2.kafka:9092"
+  KAFKA_CONSUMER_GROUP: "recommend-consumer-group"
+  KAFKA_AUTO_OFFSET_RESET: "latest"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-config
+  labels:
+    app.kubernetes.io/name: inference-config
+    app.kubernetes.io/part-of: generative-recsys
+data:
+  # 模型配置
+  MODEL_PATH: "/models/ugt"
+  MODEL_VERSION: "v1"
+  MODEL_FORMAT: "tensorrt"
+  
+  # GPU 配置
+  CUDA_VISIBLE_DEVICES: "0"
+  CUDA_MEMORY_FRACTION: "0.9"
+  
+  # 推理配置
+  INFERENCE_BATCH_SIZE: "64"
+  INFERENCE_MAX_SEQUENCE_LENGTH: "512"
+  INFERENCE_WARMUP_STEPS: "10"
+  
+  # M-FALCON 加速配置
+  MFALCON_ENABLED: "true"
+  MFALCON_CASCADE_K: "1000,100,10"
+  MFALCON_MAX_HISTORY: "512"
+  
+  # TensorRT 配置
+  TENSORRT_PRECISION: "fp16"
+  TENSORRT_WORKSPACE_SIZE: "4096"
+  CUDA_GRAPH_ENABLED: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cold-start-config
+  labels:
+    app.kubernetes.io/name: cold-start-config
+    app.kubernetes.io/part-of: generative-recsys
+data:
+  # LLM 冷启动配置
+  LLM_MODEL: "qwen3-8b"
+  LLM_ENDPOINT: "http://llm-service:8080/v1/chat/completions"
+  LLM_MAX_TOKENS: "1024"
+  LLM_TEMPERATURE: "0.7"
+  
+  # 语义 ID 配置
+  SEMANTIC_ID_CODEBOOK_SIZES: "1024,4096,16384"
+  SEMANTIC_ID_EMBEDDING_DIM: "256"
+  
+  # 跨域迁移配置
+  CROSS_DOMAIN_ENABLED: "true"
+  CROSS_DOMAIN_TOP_K: "10"
+  
+  # 快速适应配置
+  RAPID_ADAPTATION_ENABLED: "true"
+  RAPID_ADAPTATION_UPDATE_INTERVAL: "5m"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  labels:
+    app.kubernetes.io/name: nginx-config
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx.pid;
+    
+    events {
+        worker_connections 4096;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        log_format json escape=json '{'
+            '"time":"$time_iso8601",'
+            '"remote_addr":"$remote_addr",'
+            '"method":"$request_method",'
+            '"uri":"$request_uri",'
+            '"status":$status,'
+            '"body_bytes_sent":$body_bytes_sent,'
+            '"request_time":$request_time,'
+            '"upstream_response_time":"$upstream_response_time",'
+            '"http_referrer":"$http_referer",'
+            '"http_user_agent":"$http_user_agent",'
+            '"request_id":"$request_id"'
+        '}';
+        
+        access_log /var/log/nginx/access.log json;
+        
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        
+        # Gzip 压缩
+        gzip on;
+        gzip_vary on;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+        
+        # 上游服务
+        upstream recommend_backend {
+            least_conn;
+            server recommend-service:8080 weight=5;
+            keepalive 32;
+        }
+        
+        server {
+            listen 80;
+            server_name _;
+            
+            location /health {
+                return 200 'OK';
+                add_header Content-Type text/plain;
+            }
+            
+            location /api/v1/ {
+                proxy_pass http://recommend_backend;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Request-ID $request_id;
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 60s;
+                proxy_read_timeout 60s;
+            }
+        }
+    }
+

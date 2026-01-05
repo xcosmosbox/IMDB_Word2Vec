@@ -1,0 +1,168 @@
+# 开发环境调试工具
+# 包含用于调试和测试的辅助 Pod
+---
+# Debug Pod - 用于网络和服务调试
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-pod
+  labels:
+    app: debug-tools
+    purpose: debugging
+spec:
+  containers:
+    - name: debug
+      image: nicolaka/netshoot:latest
+      command:
+        - /bin/sh
+        - -c
+        - "while true; do sleep 3600; done"
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "32Mi"
+        limits:
+          cpu: "100m"
+          memory: "128Mi"
+  restartPolicy: Always
+---
+# Redis Commander - Redis 可视化管理
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-commander
+  labels:
+    app: redis-commander
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-commander
+  template:
+    metadata:
+      labels:
+        app: redis-commander
+    spec:
+      containers:
+        - name: redis-commander
+          image: rediscommander/redis-commander:latest
+          ports:
+            - containerPort: 8081
+          env:
+            - name: REDIS_HOST
+              value: "redis-dev"
+            - name: REDIS_PORT
+              value: "6379"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-commander
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8081
+      targetPort: 8081
+  selector:
+    app: redis-commander
+---
+# pgAdmin - PostgreSQL 可视化管理
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin
+  labels:
+    app: pgadmin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgadmin
+  template:
+    metadata:
+      labels:
+        app: pgadmin
+    spec:
+      containers:
+        - name: pgadmin
+          image: dpage/pgadmin4:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              value: "admin@example.com"
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dev-secrets
+                  key: PGADMIN_PASSWORD
+                  optional: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: pgadmin-data
+              mountPath: /var/lib/pgadmin
+      volumes:
+        - name: pgadmin-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgadmin
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80
+  selector:
+    app: pgadmin
+---
+# 开发环境 Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dev-secrets
+type: Opaque
+stringData:
+  PGADMIN_PASSWORD: "dev-password-changeme"
+---
+# Port Forward 服务 - 用于本地开发
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: port-forward-helper
+data:
+  README.md: |
+    # 开发环境端口转发指南
+    
+    ## 推荐服务
+    kubectl port-forward svc/dev-recommend-service 8080:8080
+    
+    ## 用户服务
+    kubectl port-forward svc/dev-user-service 8081:8081
+    
+    ## Redis Commander
+    kubectl port-forward svc/redis-commander 8082:8081
+    
+    ## pgAdmin
+    kubectl port-forward svc/pgadmin 8083:80
+    
+    ## Prometheus
+    kubectl port-forward svc/prometheus 9090:9090 -n observability
+    
+    ## Grafana
+    kubectl port-forward svc/grafana 3000:3000 -n observability
+

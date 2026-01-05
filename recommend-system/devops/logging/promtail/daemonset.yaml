@@ -1,0 +1,324 @@
+# =============================================================================
+# Promtail Kubernetes DaemonSet 部署清单
+# 
+# 在每个节点上运行 Promtail 收集日志
+# =============================================================================
+
+---
+# ConfigMap - Promtail 配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: recommend-prod
+  labels:
+    app: promtail
+    component: logging
+data:
+  promtail.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+      log_level: info
+    
+    positions:
+      filename: /tmp/positions.yaml
+      sync_period: 10s
+    
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+        tenant_id: recommend
+        batchwait: 1s
+        batchsize: 1048576
+        timeout: 10s
+        backoff_config:
+          min_period: 500ms
+          max_period: 5m
+          max_retries: 10
+        external_labels:
+          cluster: recommend-prod
+          environment: production
+    
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: .+
+          
+          - source_labels: [__meta_kubernetes_namespace]
+            action: drop
+            regex: (kube-system|kube-public|kube-node-lease)
+          
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+          
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            action: replace
+            target_label: container
+          
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: replace
+            target_label: app
+          
+          - source_labels: [__meta_kubernetes_pod_label_env]
+            action: replace
+            target_label: env
+          
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            action: replace
+            target_label: node
+          
+          - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
+            target_label: __path__
+            separator: /
+            replacement: /var/log/pods/*$1/$2/*.log
+        
+        pipeline_stages:
+          - cri: {}
+          
+          - json:
+              expressions:
+                level: level
+                message: message
+                service: service
+                trace_id: trace_id
+                timestamp: timestamp
+                duration_ms: duration_ms
+                user_id: user_id
+                request_id: request_id
+          
+          - timestamp:
+              source: timestamp
+              format: RFC3339Nano
+          
+          - labels:
+              level:
+              service:
+              trace_id:
+          
+          - match:
+              selector: '{level="DEBUG"}'
+              action: drop
+              drop_counter_reason: debug_logs_filtered
+
+---
+# ServiceAccount - Promtail
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: promtail
+  namespace: recommend-prod
+  labels:
+    app: promtail
+    component: logging
+
+---
+# ClusterRole - Promtail
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: promtail
+  labels:
+    app: promtail
+    component: logging
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "watch", "list"]
+
+---
+# ClusterRoleBinding - Promtail
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: promtail
+  labels:
+    app: promtail
+    component: logging
+subjects:
+  - kind: ServiceAccount
+    name: promtail
+    namespace: recommend-prod
+roleRef:
+  kind: ClusterRole
+  name: promtail
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# DaemonSet - Promtail
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: promtail
+  namespace: recommend-prod
+  labels:
+    app: promtail
+    component: logging
+spec:
+  selector:
+    matchLabels:
+      app: promtail
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: promtail
+        component: logging
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: promtail
+      
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      
+      containers:
+        - name: promtail
+          image: grafana/promtail:2.9.3
+          imagePullPolicy: IfNotPresent
+          
+          args:
+            - "-config.file=/etc/promtail/promtail.yaml"
+            - "-client.external-labels=hostname=$(HOSTNAME)"
+          
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          
+          ports:
+            - name: http-metrics
+              containerPort: 9080
+              protocol: TCP
+          
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          
+          volumeMounts:
+            - name: config
+              mountPath: /etc/promtail
+            - name: run
+              mountPath: /run/promtail
+            - name: containers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: pods
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: positions
+              mountPath: /tmp
+          
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http-metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http-metrics
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+      
+      volumes:
+        - name: config
+          configMap:
+            name: promtail-config
+        - name: run
+          hostPath:
+            path: /run/promtail
+        - name: containers
+          hostPath:
+            path: /var/lib/docker/containers
+        - name: pods
+          hostPath:
+            path: /var/log/pods
+        - name: positions
+          emptyDir: {}
+
+---
+# Service - Promtail (用于 metrics 抓取)
+apiVersion: v1
+kind: Service
+metadata:
+  name: promtail
+  namespace: recommend-prod
+  labels:
+    app: promtail
+    component: logging
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http-metrics
+      port: 9080
+      targetPort: 9080
+      protocol: TCP
+  selector:
+    app: promtail
+
+---
+# PodMonitor - Prometheus 监控 (如果使用 Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: promtail
+  namespace: recommend-prod
+  labels:
+    app: promtail
+    component: logging
+spec:
+  selector:
+    matchLabels:
+      app: promtail
+  podMetricsEndpoints:
+    - port: http-metrics
+      path: /metrics
+      interval: 30s
+  namespaceSelector:
+    matchNames:
+      - recommend-prod
+

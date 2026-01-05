@@ -1,0 +1,470 @@
+# =============================================================================
+# 版本发布工作流
+# 
+# 触发条件: 手动触发
+# 任务: 创建版本标签、生成 Changelog、创建 GitHub Release
+# =============================================================================
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: '版本类型'
+        required: true
+        type: choice
+        options:
+          - patch  # 补丁版本 (x.x.1)
+          - minor  # 次版本 (x.1.0)
+          - major  # 主版本 (1.0.0)
+      pre_release:
+        description: '预发布版本后缀 (留空表示正式版本)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - alpha
+          - beta
+          - rc
+      dry_run:
+        description: '试运行 (不创建实际发布)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GIT_USER_NAME: 'github-actions[bot]'
+  GIT_USER_EMAIL: 'github-actions[bot]@users.noreply.github.com'
+
+jobs:
+  # ==========================================================================
+  # 准备发布
+  # ==========================================================================
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      current_version: ${{ steps.version.outputs.current }}
+      new_version: ${{ steps.version.outputs.new }}
+      tag_name: ${{ steps.version.outputs.tag }}
+      changelog: ${{ steps.changelog.outputs.content }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Get current version
+        id: version
+        run: |
+          # 获取最新的版本标签
+          CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "current=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
+          echo "Current version: ${CURRENT_VERSION}"
+          
+          # 解析版本号
+          VERSION=${CURRENT_VERSION#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${VERSION%-*}"
+          
+          # 根据版本类型计算新版本
+          case "${{ github.event.inputs.version_type }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          
+          # 添加预发布后缀
+          if [ -n "${{ github.event.inputs.pre_release }}" ]; then
+            # 计算预发布版本号
+            PRE_COUNT=$(git tag -l "v${NEW_VERSION}-${{ github.event.inputs.pre_release }}.*" | wc -l)
+            PRE_NUM=$((PRE_COUNT + 1))
+            NEW_VERSION="${NEW_VERSION}-${{ github.event.inputs.pre_release }}.${PRE_NUM}"
+          fi
+          
+          echo "new=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=v${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "New version: ${NEW_VERSION}"
+      
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          CURRENT_VERSION="${{ steps.version.outputs.current }}"
+          NEW_VERSION="${{ steps.version.outputs.new }}"
+          
+          echo "Generating changelog from ${CURRENT_VERSION} to HEAD..."
+          
+          # 生成 Changelog
+          CHANGELOG=$(cat << 'EOF'
+          ## What's Changed
+          
+          EOF
+          )
+          
+          # 按类型分组提交
+          echo "### 🚀 Features" >> /tmp/changelog.md
+          git log ${CURRENT_VERSION}..HEAD --pretty=format:"- %s (%h)" --grep="^feat" >> /tmp/changelog.md || true
+          echo "" >> /tmp/changelog.md
+          
+          echo "### 🐛 Bug Fixes" >> /tmp/changelog.md
+          git log ${CURRENT_VERSION}..HEAD --pretty=format:"- %s (%h)" --grep="^fix" >> /tmp/changelog.md || true
+          echo "" >> /tmp/changelog.md
+          
+          echo "### 📚 Documentation" >> /tmp/changelog.md
+          git log ${CURRENT_VERSION}..HEAD --pretty=format:"- %s (%h)" --grep="^docs" >> /tmp/changelog.md || true
+          echo "" >> /tmp/changelog.md
+          
+          echo "### 🔧 Maintenance" >> /tmp/changelog.md
+          git log ${CURRENT_VERSION}..HEAD --pretty=format:"- %s (%h)" --grep="^chore\|^refactor\|^style" >> /tmp/changelog.md || true
+          echo "" >> /tmp/changelog.md
+          
+          echo "### 📦 Dependencies" >> /tmp/changelog.md
+          git log ${CURRENT_VERSION}..HEAD --pretty=format:"- %s (%h)" --grep="^deps\|^build" >> /tmp/changelog.md || true
+          echo "" >> /tmp/changelog.md
+          
+          # 添加贡献者列表
+          echo "### 👥 Contributors" >> /tmp/changelog.md
+          git log ${CURRENT_VERSION}..HEAD --pretty=format:"@%an" | sort -u | head -20 >> /tmp/changelog.md
+          echo "" >> /tmp/changelog.md
+          
+          # 添加完整提交列表
+          echo "<details><summary>All Commits</summary>" >> /tmp/changelog.md
+          echo "" >> /tmp/changelog.md
+          git log ${CURRENT_VERSION}..HEAD --pretty=format:"- %s (%h) by @%an" >> /tmp/changelog.md
+          echo "" >> /tmp/changelog.md
+          echo "</details>" >> /tmp/changelog.md
+          
+          # 读取并设置输出
+          CONTENT=$(cat /tmp/changelog.md)
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          echo "$CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Preview release
+        run: |
+          echo "## Release Preview" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Previous:** ${{ steps.version.outputs.current }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Changelog" >> $GITHUB_STEP_SUMMARY
+          cat /tmp/changelog.md >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # 运行测试
+  # ==========================================================================
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Run Go tests
+        working-directory: ./recommend-system
+        run: go test -v -race ./...
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Run Python tests
+        working-directory: ./recommend-system/algorithm
+        run: |
+          pip install -r requirements.txt pytest
+          pytest -v --ignore=serving/model_repository
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Run frontend tests
+        run: |
+          for app in user-app admin; do
+            cd recommend-system/frontend/$app
+            npm ci
+            npm run test -- --run || true
+            cd -
+          done
+
+  # ==========================================================================
+  # 构建产物
+  # ==========================================================================
+  build:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    needs: [prepare, test]
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Build binaries
+        working-directory: ./recommend-system
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION="${{ needs.prepare.outputs.new_version }}"
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          
+          EXT=""
+          if [ "${{ matrix.goos }}" == "windows" ]; then
+            EXT=".exe"
+          fi
+          
+          mkdir -p dist
+          
+          for SERVICE in recommend-service user-service item-service; do
+            OUTPUT="dist/${SERVICE}-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
+            echo "Building ${OUTPUT}..."
+            go build -ldflags="${LDFLAGS}" -o "${OUTPUT}" ./cmd/${SERVICE}
+          done
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: recommend-system/dist/
+
+  # ==========================================================================
+  # 构建 Docker 镜像
+  # ==========================================================================
+  docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [prepare, test]
+    strategy:
+      matrix:
+        image: [recommend-service, user-service, item-service, ugt-inference]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.DOCKER_REGISTRY_URL }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Determine Dockerfile
+        id: dockerfile
+        run: |
+          case "${{ matrix.image }}" in
+            recommend-service)
+              echo "path=deployments/docker/Dockerfile" >> $GITHUB_OUTPUT
+              ;;
+            user-service)
+              echo "path=deployments/docker/Dockerfile.user" >> $GITHUB_OUTPUT
+              ;;
+            item-service)
+              echo "path=deployments/docker/Dockerfile.item" >> $GITHUB_OUTPUT
+              ;;
+            ugt-inference)
+              echo "path=algorithm/Dockerfile" >> $GITHUB_OUTPUT
+              ;;
+          esac
+      
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./recommend-system
+          file: ./recommend-system/${{ steps.dockerfile.outputs.path }}
+          push: ${{ github.event.inputs.dry_run != 'true' }}
+          tags: |
+            ${{ secrets.DOCKER_REGISTRY_URL }}/${{ matrix.image }}:${{ needs.prepare.outputs.new_version }}
+            ${{ secrets.DOCKER_REGISTRY_URL }}/${{ matrix.image }}:latest
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.new_version }}
+
+  # ==========================================================================
+  # 创建 GitHub Release
+  # ==========================================================================
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [prepare, build, docker]
+    if: github.event.inputs.dry_run != 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          
+          # 合并所有二进制文件
+          for dir in artifacts/binaries-*; do
+            cp -r $dir/* release-assets/ 2>/dev/null || true
+          done
+          
+          # 创建 checksums
+          cd release-assets
+          sha256sum * > checksums.txt
+          cd -
+          
+          ls -la release-assets/
+      
+      - name: Configure Git
+        run: |
+          git config user.name "${{ env.GIT_USER_NAME }}"
+          git config user.email "${{ env.GIT_USER_EMAIL }}"
+      
+      - name: Create and push tag
+        run: |
+          TAG="${{ needs.prepare.outputs.tag_name }}"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          name: Release ${{ needs.prepare.outputs.tag_name }}
+          body: |
+            # Release ${{ needs.prepare.outputs.tag_name }}
+            
+            ${{ needs.prepare.outputs.changelog }}
+            
+            ## 📦 Docker Images
+            
+            ```bash
+            docker pull ${{ secrets.DOCKER_REGISTRY_URL }}/recommend-service:${{ needs.prepare.outputs.new_version }}
+            docker pull ${{ secrets.DOCKER_REGISTRY_URL }}/user-service:${{ needs.prepare.outputs.new_version }}
+            docker pull ${{ secrets.DOCKER_REGISTRY_URL }}/item-service:${{ needs.prepare.outputs.new_version }}
+            docker pull ${{ secrets.DOCKER_REGISTRY_URL }}/ugt-inference:${{ needs.prepare.outputs.new_version }}
+            ```
+            
+            ## 🚀 Quick Deploy
+            
+            ```bash
+            # 使用 Helm
+            helm upgrade --install recommend-system ./charts/recommend-system \
+              --set version=${{ needs.prepare.outputs.new_version }}
+            
+            # 使用 Kustomize
+            kustomize build devops/kubernetes/overlays/prod | kubectl apply -f -
+            ```
+          draft: false
+          prerelease: ${{ github.event.inputs.pre_release != '' }}
+          files: |
+            release-assets/*
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Update CHANGELOG.md
+        run: |
+          # 更新 CHANGELOG.md 文件
+          cat << EOF > /tmp/new_changelog.md
+          # Changelog
+          
+          ## [${{ needs.prepare.outputs.new_version }}] - $(date +%Y-%m-%d)
+          
+          ${{ needs.prepare.outputs.changelog }}
+          
+          EOF
+          
+          if [ -f recommend-system/CHANGELOG.md ]; then
+            # 跳过已存在的标题
+            tail -n +2 recommend-system/CHANGELOG.md >> /tmp/new_changelog.md
+          fi
+          
+          mv /tmp/new_changelog.md recommend-system/CHANGELOG.md
+          
+          git add recommend-system/CHANGELOG.md
+          git commit -m "docs: update CHANGELOG for ${{ needs.prepare.outputs.tag_name }}"
+          git push origin main
+      
+      - name: Notify release
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "🎉 New Release Published!",
+              "attachments": [{
+                "color": "good",
+                "fields": [
+                  {"title": "Version", "value": "${{ needs.prepare.outputs.tag_name }}", "short": true},
+                  {"title": "Type", "value": "${{ github.event.inputs.version_type }}", "short": true},
+                  {"title": "Release Notes", "value": "https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.tag_name }}", "short": false}
+                ]
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ==========================================================================
+  # 试运行总结
+  # ==========================================================================
+  dry-run-summary:
+    name: Dry Run Summary
+    runs-on: ubuntu-latest
+    needs: [prepare, build, docker]
+    if: github.event.inputs.dry_run == 'true'
+    steps:
+      - name: Summary
+        run: |
+          echo "## 🏃 Dry Run Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This was a dry run. No release was created." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Would have released:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag:** ${{ needs.prepare.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ needs.prepare.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To create the actual release, run this workflow again with 'dry_run' unchecked." >> $GITHUB_STEP_SUMMARY
+

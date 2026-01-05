@@ -1,0 +1,350 @@
+# =============================================================================
+# Prometheus 记录规则 (Recording Rules)
+# 
+# 预计算常用指标，提高查询性能
+# 用于 Grafana Dashboard 和告警规则
+# =============================================================================
+
+groups:
+  # ==========================================================================
+  # HTTP 服务指标聚合
+  # ==========================================================================
+  - name: http-service-metrics
+    interval: 30s
+    rules:
+      # 服务级别 QPS
+      - record: service:http_requests:rate5m
+        expr: |
+          sum(rate(http_requests_total[5m])) by (service)
+
+      # 服务级别错误率
+      - record: service:http_error_rate:rate5m
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (service)
+          /
+          sum(rate(http_requests_total[5m])) by (service)
+
+      # 服务级别 P50 延迟
+      - record: service:http_latency_p50:rate5m
+        expr: |
+          histogram_quantile(0.50, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)
+          )
+
+      # 服务级别 P90 延迟
+      - record: service:http_latency_p90:rate5m
+        expr: |
+          histogram_quantile(0.90, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)
+          )
+
+      # 服务级别 P99 延迟
+      - record: service:http_latency_p99:rate5m
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)
+          )
+
+      # 服务级别平均延迟
+      - record: service:http_latency_avg:rate5m
+        expr: |
+          sum(rate(http_request_duration_seconds_sum[5m])) by (service)
+          /
+          sum(rate(http_request_duration_seconds_count[5m])) by (service)
+
+      # 按路径统计的 QPS
+      - record: service:http_requests_by_path:rate5m
+        expr: |
+          sum(rate(http_requests_total[5m])) by (service, path, method)
+
+      # 按状态码统计
+      - record: service:http_requests_by_status:rate5m
+        expr: |
+          sum(rate(http_requests_total[5m])) by (service, status)
+
+  # ==========================================================================
+  # gRPC 服务指标聚合
+  # ==========================================================================
+  - name: grpc-service-metrics
+    interval: 30s
+    rules:
+      # gRPC QPS
+      - record: service:grpc_requests:rate5m
+        expr: |
+          sum(rate(grpc_requests_total[5m])) by (service)
+
+      # gRPC 错误率
+      - record: service:grpc_error_rate:rate5m
+        expr: |
+          sum(rate(grpc_requests_total{status!="OK"}[5m])) by (service)
+          /
+          sum(rate(grpc_requests_total[5m])) by (service)
+
+      # gRPC P99 延迟
+      - record: service:grpc_latency_p99:rate5m
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(grpc_server_handling_seconds_bucket[5m])) by (le, grpc_service)
+          )
+
+      # 按方法统计的 QPS
+      - record: service:grpc_requests_by_method:rate5m
+        expr: |
+          sum(rate(grpc_requests_total[5m])) by (service, method)
+
+  # ==========================================================================
+  # 推理服务指标聚合
+  # ==========================================================================
+  - name: inference-metrics
+    interval: 30s
+    rules:
+      # 推理 QPS
+      - record: model:inference_requests:rate5m
+        expr: |
+          sum(rate(inference_requests_total[5m])) by (model)
+
+      # 推理错误率
+      - record: model:inference_error_rate:rate5m
+        expr: |
+          sum(rate(inference_requests_total{status="error"}[5m])) by (model)
+          /
+          sum(rate(inference_requests_total[5m])) by (model)
+
+      # 推理 P50 延迟
+      - record: model:inference_latency_p50:rate5m
+        expr: |
+          histogram_quantile(0.50, 
+            sum(rate(inference_latency_seconds_bucket[5m])) by (le, model)
+          )
+
+      # 推理 P95 延迟
+      - record: model:inference_latency_p95:rate5m
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(inference_latency_seconds_bucket[5m])) by (le, model)
+          )
+
+      # 推理 P99 延迟
+      - record: model:inference_latency_p99:rate5m
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(inference_latency_seconds_bucket[5m])) by (le, model)
+          )
+
+      # 平均批处理大小
+      - record: model:inference_batch_size_avg:rate5m
+        expr: |
+          sum(rate(inference_batch_size_sum[5m])) by (model)
+          /
+          sum(rate(inference_batch_size_count[5m])) by (model)
+
+      # GPU 内存使用率
+      - record: gpu:memory_usage_ratio
+        expr: |
+          DCGM_FI_DEV_FB_USED
+          /
+          (DCGM_FI_DEV_FB_FREE + DCGM_FI_DEV_FB_USED)
+
+      # GPU 利用率
+      - record: gpu:utilization
+        expr: |
+          DCGM_FI_DEV_GPU_UTIL
+
+      # 模型加载时间 P99
+      - record: model:load_time_p99
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(model_load_time_seconds_bucket[5m])) by (le, model)
+          )
+
+  # ==========================================================================
+  # 缓存指标聚合
+  # ==========================================================================
+  - name: cache-metrics
+    interval: 30s
+    rules:
+      # 缓存命中率
+      - record: cache:hit_ratio:rate5m
+        expr: |
+          sum(rate(cache_hits_total[5m])) by (cache_type)
+          /
+          sum(rate(cache_requests_total[5m])) by (cache_type)
+
+      # 缓存 QPS
+      - record: cache:requests:rate5m
+        expr: |
+          sum(rate(cache_requests_total[5m])) by (cache_type)
+
+      # 缓存延迟 P99
+      - record: cache:latency_p99:rate5m
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(cache_operation_duration_seconds_bucket[5m])) by (le, cache_type, operation)
+          )
+
+  # ==========================================================================
+  # 数据库指标聚合
+  # ==========================================================================
+  - name: database-metrics
+    interval: 30s
+    rules:
+      # 数据库查询 QPS
+      - record: db:queries:rate5m
+        expr: |
+          sum(rate(db_query_duration_seconds_count[5m])) by (query_type)
+
+      # 数据库查询 P99 延迟
+      - record: db:query_latency_p99:rate5m
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(db_query_duration_seconds_bucket[5m])) by (le, query_type)
+          )
+
+      # PostgreSQL 连接使用率
+      - record: postgres:connection_usage_ratio
+        expr: |
+          pg_stat_database_numbackends
+          /
+          pg_settings_max_connections
+
+      # PostgreSQL 缓存命中率
+      - record: postgres:cache_hit_ratio
+        expr: |
+          pg_stat_database_blks_hit
+          /
+          (pg_stat_database_blks_hit + pg_stat_database_blks_read + 0.001)
+
+      # Redis 内存使用率
+      - record: redis:memory_usage_ratio
+        expr: |
+          redis_memory_used_bytes
+          /
+          redis_memory_max_bytes
+
+      # Redis 命中率
+      - record: redis:hit_ratio
+        expr: |
+          redis_keyspace_hits_total
+          /
+          (redis_keyspace_hits_total + redis_keyspace_misses_total + 0.001)
+
+  # ==========================================================================
+  # 资源使用指标聚合
+  # ==========================================================================
+  - name: resource-metrics
+    interval: 30s
+    rules:
+      # Pod CPU 使用率
+      - record: pod:cpu_usage_ratio:rate5m
+        expr: |
+          sum(rate(container_cpu_usage_seconds_total{namespace=~"recommend.*"}[5m])) by (pod)
+          /
+          sum(container_spec_cpu_quota{namespace=~"recommend.*"}/container_spec_cpu_period{namespace=~"recommend.*"}) by (pod)
+
+      # Pod 内存使用率
+      - record: pod:memory_usage_ratio
+        expr: |
+          container_memory_usage_bytes{namespace=~"recommend.*"}
+          /
+          container_spec_memory_limit_bytes{namespace=~"recommend.*"}
+
+      # 命名空间级别 CPU 使用
+      - record: namespace:cpu_usage:rate5m
+        expr: |
+          sum(rate(container_cpu_usage_seconds_total{namespace=~"recommend.*"}[5m])) by (namespace)
+
+      # 命名空间级别内存使用
+      - record: namespace:memory_usage
+        expr: |
+          sum(container_memory_usage_bytes{namespace=~"recommend.*"}) by (namespace)
+
+      # 节点 CPU 使用率
+      - record: node:cpu_usage_ratio:rate5m
+        expr: |
+          1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (node)
+
+      # 节点内存使用率
+      - record: node:memory_usage_ratio
+        expr: |
+          1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+
+  # ==========================================================================
+  # 业务指标聚合
+  # ==========================================================================
+  - name: business-metrics
+    interval: 60s
+    rules:
+      # 推荐请求 QPS
+      - record: business:recommendation_requests:rate5m
+        expr: |
+          sum(rate(recommendation_requests_total[5m]))
+
+      # 推荐点击率 (CTR)
+      - record: business:recommendation_ctr:rate1h
+        expr: |
+          sum(rate(recommendation_clicks_total[1h]))
+          /
+          sum(rate(recommendation_impressions_total[1h]))
+
+      # 推荐转化率 (CVR)
+      - record: business:recommendation_cvr:rate1h
+        expr: |
+          sum(rate(recommendation_conversions_total[1h]))
+          /
+          sum(rate(recommendation_clicks_total[1h]))
+
+      # 冷启动用户比例
+      - record: business:cold_start_ratio:rate1h
+        expr: |
+          sum(rate(cold_start_requests_total[1h]))
+          /
+          sum(rate(recommendation_requests_total[1h]))
+
+      # 活跃用户数（每小时）
+      - record: business:active_users:count1h
+        expr: |
+          count(count by (user_id) (recommendation_requests_total offset 1h))
+
+  # ==========================================================================
+  # SLI/SLO 指标
+  # ==========================================================================
+  - name: slo-metrics
+    interval: 60s
+    rules:
+      # 可用性 SLI (成功请求比例)
+      - record: slo:availability:rate5m
+        expr: |
+          sum(rate(http_requests_total{status!~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total[5m]))
+
+      # 延迟 SLI (P99 < 200ms 的请求比例)
+      - record: slo:latency:rate5m
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{le="0.2"}[5m]))
+          /
+          sum(rate(http_request_duration_seconds_count[5m]))
+
+      # 每日错误预算消耗
+      - record: slo:error_budget_consumed:rate24h
+        expr: |
+          1 - (
+            sum(rate(http_requests_total{status!~"5.."}[24h]))
+            /
+            sum(rate(http_requests_total[24h]))
+          )
+
+      # 推理服务 SLI
+      - record: slo:inference_availability:rate5m
+        expr: |
+          sum(rate(inference_requests_total{status!="error"}[5m]))
+          /
+          sum(rate(inference_requests_total[5m]))
+
+      # 推理延迟 SLI (P95 < 200ms)
+      - record: slo:inference_latency:rate5m
+        expr: |
+          sum(rate(inference_latency_seconds_bucket{le="0.2"}[5m]))
+          /
+          sum(rate(inference_latency_seconds_count[5m]))
+

@@ -1,0 +1,205 @@
+# 金丝雀发布配置
+# 用于渐进式发布新版本
+---
+# Canary Deployment - Recommend Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommend-service-canary
+  labels:
+    app: recommend-service
+    app.kubernetes.io/name: recommend-service
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: generative-recsys
+    version: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recommend-service
+      version: canary
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: recommend-service
+        app.kubernetes.io/name: recommend-service
+        version: canary
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        sidecar.istio.io/inject: "true"
+    spec:
+      serviceAccountName: recommend-service
+      
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: recommend-service
+                topologyKey: kubernetes.io/hostname
+      
+      containers:
+        - name: recommend-service
+          image: recommend-service:canary
+          imagePullPolicy: Always
+          
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 9090
+            - name: metrics
+              containerPort: 9091
+          
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - configMapRef:
+                name: db-config
+            - secretRef:
+                name: app-secrets
+            - secretRef:
+                name: db-secrets
+          
+          env:
+            - name: CANARY_VERSION
+              value: "true"
+            - name: VERSION
+              value: "canary"
+          
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      
+      terminationGracePeriodSeconds: 30
+---
+# Canary Service (用于直接访问金丝雀版本)
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommend-service-canary
+  labels:
+    app: recommend-service
+    version: canary
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+    - name: metrics
+      port: 9091
+      targetPort: metrics
+  selector:
+    app: recommend-service
+    version: canary
+---
+# Canary HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: recommend-service-canary-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: recommend-service-canary
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+# Canary Analysis Template (用于 Argo Rollouts)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: canary-analysis-config
+data:
+  # 金丝雀分析指标
+  success-rate-threshold: "0.99"
+  latency-p99-threshold: "500"
+  error-rate-threshold: "0.01"
+  
+  # 分析查询模板
+  success-rate-query: |
+    sum(rate(http_requests_total{service="recommend-service",version="canary",status=~"2.."}[5m])) 
+    / 
+    sum(rate(http_requests_total{service="recommend-service",version="canary"}[5m]))
+  
+  latency-query: |
+    histogram_quantile(0.99, 
+      sum(rate(http_request_duration_seconds_bucket{service="recommend-service",version="canary"}[5m])) by (le)
+    )
+  
+  error-rate-query: |
+    sum(rate(http_requests_total{service="recommend-service",version="canary",status=~"5.."}[5m])) 
+    / 
+    sum(rate(http_requests_total{service="recommend-service",version="canary"}[5m]))
+

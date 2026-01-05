@@ -1,0 +1,229 @@
+# Istio VirtualService 配置
+# 定义流量路由规则
+---
+# Recommend Service VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: recommend-vs
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: recommend-vs
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  hosts:
+    - recommend-service
+    - "api.recommend.example.com"
+  gateways:
+    - recommend-gateway
+    - mesh  # 服务网格内部流量
+  http:
+    # 金丝雀路由 - 基于请求头
+    - match:
+        - headers:
+            x-canary:
+              exact: "true"
+      route:
+        - destination:
+            host: recommend-service
+            subset: canary
+            port:
+              number: 8080
+      timeout: 10s
+      retries:
+        attempts: 2
+        perTryTimeout: 3s
+        retryOn: gateway-error,connect-failure,refused-stream,5xx
+    
+    # A/B 测试路由 - 基于用户组
+    - match:
+        - headers:
+            x-user-group:
+              exact: "experiment-a"
+      route:
+        - destination:
+            host: recommend-service
+            subset: v2
+            port:
+              number: 8080
+      timeout: 10s
+    
+    # 灰度发布路由 - 基于权重
+    - match:
+        - uri:
+            prefix: /api/v1/recommend
+      route:
+        - destination:
+            host: recommend-service
+            subset: stable
+            port:
+              number: 8080
+          weight: 95
+        - destination:
+            host: recommend-service
+            subset: canary
+            port:
+              number: 8080
+          weight: 5
+      timeout: 10s
+      retries:
+        attempts: 3
+        perTryTimeout: 3s
+        retryOn: gateway-error,connect-failure,refused-stream
+    
+    # 默认路由
+    - route:
+        - destination:
+            host: recommend-service
+            subset: stable
+            port:
+              number: 8080
+      timeout: 15s
+      retries:
+        attempts: 3
+        perTryTimeout: 5s
+        retryOn: gateway-error,connect-failure,refused-stream,retriable-4xx,5xx
+      
+      # 故障注入 (用于混沌测试，默认禁用)
+      # fault:
+      #   delay:
+      #     percentage:
+      #       value: 0.1
+      #     fixedDelay: 5s
+      #   abort:
+      #     percentage:
+      #       value: 0.01
+      #     httpStatus: 500
+---
+# User Service VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: user-service-vs
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: user-service-vs
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  hosts:
+    - user-service
+  http:
+    - match:
+        - uri:
+            prefix: /api/v1/user
+      route:
+        - destination:
+            host: user-service
+            port:
+              number: 8081
+      timeout: 5s
+      retries:
+        attempts: 2
+        perTryTimeout: 2s
+        retryOn: gateway-error,connect-failure,refused-stream
+    
+    - route:
+        - destination:
+            host: user-service
+            port:
+              number: 8081
+      timeout: 10s
+---
+# Item Service VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: item-service-vs
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: item-service-vs
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  hosts:
+    - item-service
+  http:
+    - match:
+        - uri:
+            prefix: /api/v1/item
+      route:
+        - destination:
+            host: item-service
+            port:
+              number: 8082
+      timeout: 5s
+      retries:
+        attempts: 2
+        perTryTimeout: 2s
+        retryOn: gateway-error,connect-failure,refused-stream
+    
+    - route:
+        - destination:
+            host: item-service
+            port:
+              number: 8082
+      timeout: 10s
+---
+# UGT Inference VirtualService (gRPC)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ugt-inference-vs
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: ugt-inference-vs
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  hosts:
+    - ugt-inference
+    - "grpc.recommend.example.com"
+  gateways:
+    - recommend-gateway
+    - mesh
+  http:
+    - match:
+        - port: 50051
+      route:
+        - destination:
+            host: ugt-inference
+            port:
+              number: 50051
+      timeout: 30s  # 推理可能需要更长时间
+      retries:
+        attempts: 2
+        perTryTimeout: 15s
+        retryOn: unavailable,resource-exhausted
+---
+# Frontend Apps VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: frontend-vs
+  namespace: recommend-prod
+  labels:
+    app.kubernetes.io/name: frontend-vs
+    app.kubernetes.io/part-of: generative-recsys
+spec:
+  hosts:
+    - "recommend.example.com"
+    - "admin.recommend.example.com"
+  gateways:
+    - recommend-gateway
+  http:
+    # Admin App
+    - match:
+        - headers:
+            :authority:
+              exact: "admin.recommend.example.com"
+      route:
+        - destination:
+            host: admin-app
+            port:
+              number: 80
+    
+    # User App (默认)
+    - route:
+        - destination:
+            host: user-app
+            port:
+              number: 80
+

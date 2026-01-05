@@ -1,0 +1,66 @@
+# 开发环境 ConfigMap 补丁
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  # 日志配置 - 开发环境使用详细日志
+  LOG_LEVEL: "debug"
+  LOG_FORMAT: "text"
+  
+  # 链路追踪 - 采样率 100%
+  ENABLE_TRACING: "true"
+  TRACING_SAMPLE_RATE: "1.0"
+  
+  # 缓存配置 - 较短的 TTL
+  CACHE_TTL: "60"
+  CACHE_MAX_SIZE: "1000"
+  
+  # 限流配置 - 更宽松
+  RATE_LIMIT_RPS: "100"
+  RATE_LIMIT_BURST: "200"
+  RATE_LIMIT_ENABLED: "false"
+  
+  # 特性开关 - 开启所有实验特性
+  FEATURE_NEW_ALGORITHM: "true"
+  FEATURE_AB_TEST: "true"
+  FEATURE_COLD_START_LLM: "true"
+  FEATURE_SEMANTIC_ID: "true"
+  FEATURE_DEBUG_MODE: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-config
+data:
+  # PostgreSQL - 开发环境
+  POSTGRES_HOST: "postgres-dev"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "recommend_dev"
+  POSTGRES_MAX_CONNECTIONS: "10"
+  
+  # Redis - 开发环境
+  REDIS_HOST: "redis-dev"
+  REDIS_PORT: "6379"
+  REDIS_DB: "1"
+  
+  # Milvus - 开发环境
+  MILVUS_HOST: "milvus-dev"
+  MILVUS_PORT: "19530"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-config
+data:
+  # 开发环境使用较小的批处理大小
+  INFERENCE_BATCH_SIZE: "16"
+  INFERENCE_MAX_SEQUENCE_LENGTH: "256"
+  
+  # 禁用 CUDA Graph（便于调试）
+  CUDA_GRAPH_ENABLED: "false"
+  
+  # 使用 FP32 精度便于调试
+  TENSORRT_PRECISION: "fp32"
+
