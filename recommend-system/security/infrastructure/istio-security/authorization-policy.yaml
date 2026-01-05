@@ -1,0 +1,19 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: recommend-service-policy
+  namespace: recommend-prod
+spec:
+  selector:
+    matchLabels:
+      app: recommend-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/recommend-prod/sa/api-gateway"]
+    to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/api/v1/recommend"]
+

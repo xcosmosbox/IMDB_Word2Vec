@@ -1,0 +1,29 @@
+groups:
+- name: security-rules
+  rules:
+  - alert: HighFailedLogins
+    expr: increase(auth_login_failures_total[5m]) > 10
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High rate of failed logins detected"
+      description: "User {{ $labels.user }} has failed to login more than 10 times in 5 minutes."
+
+  - alert: WAFBlockSpike
+    expr: rate(waf_blocked_requests_total[1m]) > 5
+    for: 30s
+    labels:
+      severity: warning
+    annotations:
+      summary: "Spike in WAF blocked requests"
+      description: "Potential attack in progress. WAF blocking rate is high."
+
+  - alert: PrivilegedActionOffHours
+    expr: audit_privileged_actions_total > 0 and (hour() < 8 or hour() > 20)
+    for: 0m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Privileged action detected during off-hours"
+
